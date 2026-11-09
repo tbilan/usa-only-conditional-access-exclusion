@@ -69,9 +69,12 @@ app.post('/api/tenants', wrap(async (req, res) => {
   res.status(201).json({ ok: true });
 }));
 
+// Removes the tenant from THIS app only. Nothing is changed in Entra (policy, group and group
+// members stay as they are). Tracked exclusions would stop expiring, so require force if any exist.
 app.delete('/api/tenants/:tenantId', wrap(async (req, res) => {
-  if (store.exclusions(req.tenant.tenantId).length) {
-    throw bad('Remove this tenant\'s exclusions first so nothing is left in its group untracked', 409);
+  const n = store.exclusions(req.tenant.tenantId).length;
+  if (n && req.body?.force !== true) {
+    throw Object.assign(bad(`${n} tracked exclusion(s) exist for this tenant`, 409), { code: 'HAS_EXCLUSIONS' });
   }
   store.removeTenant(req.tenant.tenantId);
   res.json({ ok: true });

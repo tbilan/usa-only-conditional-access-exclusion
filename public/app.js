@@ -85,6 +85,30 @@ const STATE_LABEL = {
   disabled: ['OFF', 'bad'],
 };
 
+// Remove a tenant from this app (does not change anything in Entra).
+function removeTenantCard(t) {
+  const msg = h('span', { class: 'msg' });
+  const del = async (force) => {
+    try {
+      await api('DELETE', `/api/tenants/${t.tenantId}`, { force });
+      current = null;
+      main.replaceChildren(h('p', { class: 'muted' }, `Removed ${t.name}.`));
+      loadTenants();
+    } catch (err) {
+      if (!force && /tracked exclusion/.test(err.message) &&
+          confirm(`${err.message}.\n\nRemoving the tenant forgets these exclusions, so any that have a removal date will NOT be removed automatically — those users stay excluded in Entra until you remove them there.\n\nRemove ${t.name} anyway?`)) {
+        return del(true);
+      }
+      msg.textContent = err.message; msg.className = 'msg err';
+    }
+  };
+  return h('div', { class: 'card' },
+    h('div', { class: 'row' },
+      h('button', { class: 'danger', onclick: () => {
+        if (confirm(`Remove ${t.name} from this app?\n\nThis only removes it from the app. The policy, group and members in the tenant are NOT changed.`)) del(false);
+      } }, 'Remove tenant from app'), msg));
+}
+
 async function openTenant(tenantId) {
   current = tenantId;
   loadTenants();
@@ -98,7 +122,8 @@ async function openTenant(tenantId) {
       h('h2', {}, t ? t.name : tenantId),
       h('p', { class: 'err' }, err.message),
       t ? h('p', {}, 'If this tenant has not approved the app yet, send an admin this link: ',
-        h('a', { href: t.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')) : ''
+        h('a', { href: t.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')) : '',
+      t ? removeTenantCard(t) : ''
     );
   }
 }
@@ -143,10 +168,12 @@ function render(s) {
   );
 
   main.replaceChildren(policyCard);
-  if (!s.ready) return;
-  main.append(addForm(t, s, act, say), exclusionTable(t, s, act, say));
-  if (s.untracked.length) main.append(untrackedTable(t, s, act, say));
-  main.append(auditCard(s));
+  if (s.ready) {
+    main.append(addForm(t, s, act, say), exclusionTable(t, s, act, say));
+    if (s.untracked.length) main.append(untrackedTable(t, s, act, say));
+    main.append(auditCard(s));
+  }
+  main.append(removeTenantCard(t));
 }
 
 // First visit (or after "Change policy"): discover the tenant's CA policies and let the user pick one.
@@ -185,6 +212,7 @@ async function renderChooser(t, act, msg) {
         act(() => api('POST', `${base}/policy/create`, { mode: 'reportOnly' }))();
     } }, 'None of these — create a new US-only policy (report-only)')),
     msg);
+  main.append(removeTenantCard(t));
 }
 
 function addForm(t, s, act, say) {
