@@ -186,7 +186,15 @@ async function renderChooser(t, act, msg) {
   main.replaceChildren(card);
 
   let policies;
-  try { policies = await api('GET', `${base}/policies`); } catch (err) { card.append(h('p', { class: 'err' }, err.message)); return; }
+  try { policies = await api('GET', `${base}/policies`); } catch (err) {
+    card.querySelector('p.muted:last-child').remove();
+    const full = tenants.find((x) => x.tenantId === t.tenantId);
+    card.append(h('p', { class: 'err' }, err.message),
+      full ? h('p', {}, 'If this tenant has not approved the app yet, send an admin this link: ',
+        h('a', { href: full.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')) : '');
+    main.append(removeTenantCard(t));
+    return;
+  }
   card.querySelector('p.muted:last-child').remove();
 
   const list = (arr) => (arr.length ? arr.join(', ') : '—');
