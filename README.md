@@ -36,8 +36,23 @@ Always make your break-glass / emergency accounts **Permanent** exclusions befor
 5. **Per customer tenant**, an admin there must approve the app once. Open the tenant in the app; if it isn't consented the
    error shows an admin-consent link to send them.
 
+## Sign-in (SSO) and sharing
+
+The app signs people in with Microsoft Entra ID and accepts **only accounts from your bilan.com tenant**
+(`PARTNER_TENANT_ID`). Anyone who can sign in sees the same shared tenant list and can manage exclusions for all of them;
+the activity log records who did what.
+
+1. On the app registration → **Authentication**, add a **Web** redirect URI: `<BASE_URL>/auth/callback`
+   (for local use: `http://localhost:3000/auth/callback`). The delegated `User.Read` permission already covers sign-in.
+2. In `.env` set `PARTNER_TENANT_ID`, and for sharing: `HOST=0.0.0.0` and `BASE_URL=https://your-address`.
+   Host it on a server people can reach and put HTTPS in front of it (reverse proxy; set `TRUST_PROXY=true`).
+   Sessions last 8 hours (`SESSION_HOURS`).
+3. **Recommended:** limit who may sign in. In the bilan.com tenant: Entra ID → Enterprise applications → this app →
+   Properties → **Assignment required = Yes**, then assign only the people or a group who should manage client tenants.
+   Without that, every bilan.com user can open the app and change client Conditional Access policies.
+
 ## Notes
 
-- Listens on `127.0.0.1` only; rejects foreign `Host` headers and non-JSON writes. There is no login, so run it on a machine only you use.
+- Listens on `127.0.0.1` unless you set `HOST`. Rejects foreign `Host` headers and non-JSON writes; every page and API call except the sign-in routes needs a valid session.
 - Secrets live in `.env` (git-ignored). Tracked exclusions and the audit log live in `data/db.json` (git-ignored).
 - `npm test` runs the expiry tests.

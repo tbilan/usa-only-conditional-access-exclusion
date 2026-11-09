@@ -5,16 +5,24 @@ const { GUID, graphAll } = require('./lib/graph');
 const { createStore } = require('./lib/store');
 const ca = require('./lib/ca');
 const { localDate, isExpired, sweep } = require('./lib/expiry');
+const auth = require('./lib/auth');
 
 const store = createStore(path.join(cfg.dataDir, 'db.json'));
 const app = express();
 app.disable('x-powered-by');
+if (cfg.trustProxy) app.set('trust proxy', 1);
 
-// This app can change security policy, so it is local-only and hardened against
-// DNS-rebinding (Host check) and cross-site requests (JSON-only mutations).
+if (cfg.authDisabled && !['127.0.0.1', 'localhost'].includes(cfg.host)) {
+  console.error('AUTH_DISABLED=true is only allowed with HOST=127.0.0.1. Refusing to start.');
+  process.exit(1);
+}
+
+// This app can change security policy, so it checks the Host header (DNS rebinding), accepts only
+// JSON for changes (cross-site forms), and requires a bilan.com sign-in (lib/auth.js).
+const allowedHosts = new Set([`localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
 app.use((req, res, next) => {
   const host = (req.headers.host || '').toLowerCase();
-  if (host !== `localhost:${cfg.port}` && host !== `127.0.0.1:${cfg.port}`) {
+  if (!allowedHosts.has(host)) {
     return res.status(403).send('Forbidden host');
   }
   if (!['GET', 'HEAD'].includes(req.method) && !req.is('application/json')) {
@@ -24,7 +32,11 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json());
+auth.install(app); // /auth/* routes, then everything after this requires sign-in
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Audit entries record who did it.
+const audit = (req, tenantId, action, detail) => store.audit(tenantId, action, detail, req.user && req.user.upn);
 
 const wrap = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((e) => {
@@ -148,7 +160,7 @@ app.post('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
   const policy = await ca.getPolicy(req.tenant.tenantId, policyId);
   if (!policy) throw bad('Policy not found in this tenant', 404);
   store.setTenantPolicy(req.tenant.tenantId, policy.id, policy.displayName);
-  store.audit(req.tenant.tenantId, 'policy-selected', `Using policy "${policy.displayName}"`);
+  audit(req, req.tenant.tenantId, 'policy-selected', `Using policy "${policy.displayName}"`);
   res.json({ policyId: policy.id });
 }));
 
@@ -157,14 +169,14 @@ app.post('/api/tenants/:tenantId/policy/create', wrap(async (req, res) => {
   const mode = req.body?.mode === 'on' ? 'on' : 'reportOnly';
   const r = await ca.createPolicy(req.tenant.tenantId, mode);
   store.setTenantPolicy(req.tenant.tenantId, r.policyId, r.policyName);
-  store.audit(req.tenant.tenantId, 'policy-created', `Created "${r.policyName}" (${mode})`);
+  audit(req, req.tenant.tenantId, 'policy-created', `Created "${r.policyName}" (${mode})`);
   res.json(r);
 }));
 
 // Forget the chosen policy so another can be picked (users already excluded stay excluded on the old policy).
 app.delete('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
   store.setTenantPolicy(req.tenant.tenantId, undefined, undefined);
-  store.audit(req.tenant.tenantId, 'policy-unlinked', `Stopped managing "${req.tenant.policyName}"`);
+  audit(req, req.tenant.tenantId, 'policy-unlinked', `Stopped managing "${req.tenant.policyName}"`);
   res.json({ ok: true });
 }));
 
@@ -173,7 +185,7 @@ app.patch('/api/tenants/:tenantId/policy', wrap(async (req, res) => {
   if (!['reportOnly', 'on', 'off'].includes(state)) throw bad('state must be reportOnly, on or off');
   if (!req.tenant.policyId) throw bad('Choose a policy first', 409);
   await ca.setPolicyState(req.tenant.tenantId, req.tenant.policyId, state);
-  store.audit(req.tenant.tenantId, 'policy-state', `"${req.tenant.policyName}" set to ${state}`);
+  audit(req, req.tenant.tenantId, 'policy-state', `"${req.tenant.policyName}" set to ${state}`);
   res.json({ ok: true });
 }));
 
@@ -239,7 +251,7 @@ app.post('/api/tenants/:tenantId/exclusions', wrap(async (req, res) => {
     addedAt: store.findExclusion(t, userId)?.addedAt || new Date().toISOString(),
     lastError: null,
   });
-  store.audit(t, 'exclusion-added', `${user.userPrincipalName} — ${terms.permanent ? 'permanent' : 'until ' + terms.expiresOn}`);
+  audit(req, t, 'exclusion-added', `${user.userPrincipalName} — ${terms.permanent ? 'permanent' : 'until ' + terms.expiresOn}`);
   res.status(201).json({ ok: true });
 }));
 
@@ -250,7 +262,7 @@ app.patch('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) => 
   const terms = parseTerms(req.body || {});
   const reason = req.body.reason !== undefined ? String(req.body.reason).slice(0, 300) : ex.reason;
   store.upsertExclusion({ tenantId: t, userId: ex.userId, ...terms, reason, lastError: null });
-  store.audit(t, 'exclusion-updated', `${ex.upn} — ${terms.permanent ? 'permanent' : 'until ' + terms.expiresOn}`);
+  audit(req, t, 'exclusion-updated', `${ex.upn} — ${terms.permanent ? 'permanent' : 'until ' + terms.expiresOn}`);
   res.json({ ok: true });
 }));
 
@@ -260,7 +272,7 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
   const ex = store.findExclusion(t, req.params.userId);
   if (req.tenant.policyId) await ca.removeExcludedUser(t, req.tenant.policyId, req.params.userId);
   if (ex) store.deleteExclusion(t, req.params.userId);
-  store.audit(t, 'exclusion-removed', ex ? ex.upn : await nameOf(t, req.params.userId));
+  audit(req, t, 'exclusion-removed', ex ? ex.upn : await nameOf(t, req.params.userId));
   res.json({ ok: true });
 }));
 
@@ -284,8 +296,13 @@ app.post('/api/sweep', wrap(async (req, res) => {
   res.json({ removed: r.removed.length, failed: r.failed.length });
 }));
 
-app.listen(cfg.port, '127.0.0.1', () => {
-  console.log(`USA-only Conditional Access Exclusion → http://localhost:${cfg.port}`);
+app.listen(cfg.port, cfg.host, () => {
+  console.log(`USA-only Conditional Access Exclusion → ${cfg.baseUrl} (listening on ${cfg.host}:${cfg.port})`);
+  if (cfg.authDisabled) console.warn('AUTH_DISABLED=true: sign-in is OFF (local development only).');
+  else if (!auth.configured()) console.warn('Sign-in is not configured: set PARTNER_TENANT_ID (your bilan.com tenant ID) plus the client ID/secret in .env.');
+  if (!['127.0.0.1', 'localhost'].includes(cfg.host) && !cfg.baseUrl.startsWith('https://')) {
+    console.warn('Reachable from the network over plain HTTP. Put HTTPS in front of it and set BASE_URL to the https:// address.');
+  }
   if (!cfg.clientId || !cfg.clientSecret) console.warn('AZURE_CLIENT_ID / AZURE_CLIENT_SECRET missing — copy .env.example to .env');
   runSweep().catch((e) => console.error('[sweep]', e.message));
   setInterval(() => runSweep().catch((e) => console.error('[sweep]', e.message)), cfg.sweepIntervalMinutes * 60_000);

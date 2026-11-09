@@ -24,6 +24,7 @@ async function api(method, url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: method === 'GET' ? undefined : JSON.stringify(body || {}),
   });
+  if (res.status === 401) { location.href = '/auth/login'; throw new Error('Signing in…'); }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || res.statusText);
   return json;
@@ -420,9 +421,17 @@ const ACTION_LABEL = {
 function auditCard(s) {
   return h('div', { class: 'card' }, h('h2', {}, 'Recent activity'),
     s.audit.length
-      ? h('table', {}, h('thead', {}, h('tr', {}, ['When', 'What happened', 'Details'].map((c) => h('th', {}, c)))),
-          h('tbody', {}, s.audit.map((a) => h('tr', {}, h('td', { class: 'muted' }, fmtDate(a.at)), h('td', {}, ACTION_LABEL[a.action] || a.action), h('td', {}, a.detail)))))
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['When', 'Who', 'What happened', 'Details'].map((c) => h('th', {}, c)))),
+          h('tbody', {}, s.audit.map((a) => h('tr', {}, h('td', { class: 'muted' }, fmtDate(a.at)), h('td', {}, a.by || ''), h('td', {}, ACTION_LABEL[a.action] || a.action), h('td', {}, a.detail)))))
       : h('p', { class: 'muted' }, 'Nothing yet.'));
 }
 
 loadTenants();
+
+// Who is signed in (SSO) + sign out.
+api('GET', '/api/me').then((me) => {
+  $('#who').textContent = me.name || me.upn;
+  const b = $('#signOut');
+  b.hidden = me.upn === 'local';
+  b.addEventListener('click', async () => { await api('POST', '/auth/logout'); location.href = '/signed-out.html'; });
+}).catch(() => {});

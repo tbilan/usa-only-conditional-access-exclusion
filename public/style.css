@@ -4,7 +4,7 @@
 }
 * { box-sizing: border-box; }
 body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-header { padding:12px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--card); }
 h1 { font-size:18px; margin:0; } h2 { font-size:15px; margin:0 0 8px; } h3 { font-size:14px; margin:16px 0 6px; }
 .layout { display:grid; grid-template-columns:260px 1fr; min-height:calc(100vh - 49px); }
 aside { padding:16px; border-right:1px solid var(--line); background:var(--card); }
@@ -41,3 +41,5 @@ progress { width:100%; height:14px; }
 td.row { display:table-cell; white-space:nowrap; }
 td.row button { margin-right:6px; }
 td.signins { min-width:260px; }
+
+.who { display:flex; align-items:center; gap:10px; color:var(--muted); }
