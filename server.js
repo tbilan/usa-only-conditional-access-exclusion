@@ -151,31 +151,27 @@ app.patch('/api/tenants/:tenantId/policy', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ---- Recent sign-in countries for the users excluded in the chosen policy ----
+// ---- Recent sign-in countries (one user per request so the UI can show progress) ----
 // Needs the AuditLog.Read.All application permission and Entra ID P1/P2 in the tenant.
-const signInCache = new Map(); // tenantId -> { at, data }
+const signInCache = new Map(); // `${tenantId}:${userId}` -> { at, data }
 
-app.get('/api/tenants/:tenantId/signins', wrap(async (req, res) => {
+app.get('/api/tenants/:tenantId/signins/:userId', wrap(async (req, res) => {
   const t = req.tenant.tenantId;
-  if (!req.tenant.policyId) throw bad('Choose a policy first', 409);
-  const hit = signInCache.get(t);
-  if (hit && Date.now() - hit.at < 5 * 60_000 && req.query.refresh !== '1') return res.json(hit.data);
-
-  const policy = await ca.getPolicy(t, req.tenant.policyId);
-  const ids = ((policy && policy.conditions?.users?.excludeUsers) || []).filter((u) => GUID.test(u)).slice(0, 100);
-  const data = {};
+  const id = req.params.userId;
+  if (!GUID.test(id)) throw bad('userId must be a GUID');
+  const key = `${t}:${id.toLowerCase()}`;
+  const hit = signInCache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return res.json(hit.data);
   try {
-    for (let i = 0; i < ids.length; i += 5) {
-      await Promise.all(ids.slice(i, i + 5).map(async (id) => { data[id.toLowerCase()] = await ca.recentSignIns(t, id, 5); }));
-    }
+    const data = await ca.recentSignIns(t, id, 5);
+    signInCache.set(key, { at: Date.now(), data });
+    res.json(data);
   } catch (e) {
     if (e.status === 403) {
       throw bad('Sign-in logs need the AuditLog.Read.All application permission on the app (granted in this tenant) and Entra ID P1/P2 licensing.', 403);
     }
     throw e;
   }
-  signInCache.set(t, { at: Date.now(), data });
-  res.json(data);
 }));
 
 // ---- Users picklist --------------------------------------------------------

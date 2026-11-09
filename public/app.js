@@ -170,7 +170,7 @@ function render(s) {
     main.append(addForm(t, s, act, say), exclusionTable(t, s, act, say));
     if (s.untracked.length) main.append(untrackedTable(t, s, act, say));
     main.append(auditCard(s));
-    loadSignins(t.tenantId);
+    loadSignins(t);
   }
   main.append(removeTenantCard(t));
 }
@@ -301,27 +301,76 @@ function signinCell(userId) {
   return td;
 }
 
-function fillSignins(data) {
-  for (const [id, td] of signinCells) {
-    const list = data[id];
-    if (!td.isConnected) continue;
-    if (!list) { td.replaceChildren(h('span', { class: 'muted' }, 'n/a')); continue; }
-    if (!list.length) { td.replaceChildren(h('span', { class: 'muted' }, 'No sign-ins found')); continue; }
-    td.replaceChildren(...list.map((x) => {
-      const where = x.country ? regionName(x.country) : 'Unknown location';
-      const foreign = x.country && x.country !== 'US';
-      return h('div', { class: foreign || !x.country ? 'err' : '', title: `${x.ip || ''} ${x.app || ''}`.trim() },
-        `${where}${x.city ? ' (' + x.city + ')' : ''} · ${new Date(x.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${x.ok ? '' : ' · failed'}`);
-    }));
-  }
+function fillOne(id, list) {
+  const td = signinCells.get(id);
+  if (!td || !td.isConnected) return;
+  if (!list) { td.replaceChildren(h('span', { class: 'muted' }, 'n/a')); return; }
+  if (!list.length) { td.replaceChildren(h('span', { class: 'muted' }, 'No sign-ins found')); return; }
+  td.replaceChildren(...list.map((x) => {
+    const where = x.country ? regionName(x.country) : 'Unknown location';
+    const foreign = !x.country || x.country !== 'US';
+    return h('div', { class: foreign ? 'err' : '', title: `${x.ip || ''} ${x.app || ''}`.trim() },
+      `${where}${x.city ? ' (' + x.city + ')' : ''} · ${new Date(x.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${x.ok ? '' : ' · failed'}`);
+  }));
 }
 
-async function loadSignins(tenantId, refresh) {
-  try {
-    fillSignins(await api('GET', `/api/tenants/${tenantId}/signins${refresh ? '?refresh=1' : ''}`));
-  } catch (err) {
-    for (const td of signinCells.values()) if (td.isConnected) td.replaceChildren(h('span', { class: 'err' }, err.message));
-  }
+const SIGNIN_TIMEOUT_MS = 30000;
+let signinRun = 0;
+const overlayShownAt = new Map(); // tenantId -> ms; the pop-up shows once per tenant per 5 min
+
+// Shows a "Checking audit logs" screen with progress over the page until every excluded user's
+// sign-ins are loaded, the user skips, or 30 seconds pass. Late results still fill in behind it.
+async function loadSignins(t) {
+  const run = ++signinRun;
+  const ids = [...signinCells.keys()];
+  if (!ids.length) return;
+  const silent = Date.now() - (overlayShownAt.get(t.tenantId) || 0) < 5 * 60_000; // refresh after an add/remove: no pop-up
+  if (!silent) overlayShownAt.set(t.tenantId, Date.now());
+
+  const bar = h('progress', { max: String(ids.length), value: '0' });
+  const count = h('p', { class: 'muted' }, `0 of ${ids.length} users`);
+  const note = h('p', { class: 'muted' }, '');
+  let closed = silent;
+  const overlay = h('div', { class: 'overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Checking audit logs' },
+    h('div', { class: 'card modal' },
+      h('h2', {}, 'Checking audit logs…'),
+      h('p', {}, `Looking up the last 5 sign-in locations for each excluded user in ${t.name}.`),
+      bar, count, note,
+      h('button', { class: 'secondary', onclick: () => close() }, 'Skip')));
+  const close = () => { if (!closed) { closed = true; overlay.remove(); } };
+  if (!silent) document.body.append(overlay);
+
+  const timer = setTimeout(() => {
+    if (!closed) for (const [id, td] of signinCells) if (td.isConnected && td.textContent === 'Loading…') td.replaceChildren(h('span', { class: 'muted' }, 'Still loading…'));
+    close();
+  }, SIGNIN_TIMEOUT_MS);
+
+  let done = 0;
+  let fatal = false;
+  const queue = [...ids];
+  const worker = async () => {
+    while (queue.length && !fatal && run === signinRun) {
+      const id = queue.shift();
+      try {
+        fillOne(id, await api('GET', `/api/tenants/${t.tenantId}/signins/${id}`));
+      } catch (err) {
+        if (run !== signinRun) return;
+        if (/AuditLog\.Read\.All/.test(err.message)) { // permission/licensing problem: same for every user, stop early
+          fatal = true;
+          for (const td of signinCells.values()) if (td.isConnected) td.replaceChildren(h('span', { class: 'err' }, err.message));
+        } else {
+          const td = signinCells.get(id);
+          if (td && td.isConnected) td.replaceChildren(h('span', { class: 'err' }, err.message));
+        }
+      }
+      done++;
+      bar.value = done;
+      count.textContent = `${done} of ${ids.length} users`;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, ids.length) }, worker));
+  clearTimeout(timer);
+  close();
 }
 
 function exclusionTable(t, s, act) {
