@@ -4,7 +4,7 @@ const cfg = require('./lib/config');
 const { GUID, graphAll } = require('./lib/graph');
 const { createStore } = require('./lib/store');
 const ca = require('./lib/ca');
-const { localDate, isExpired, sweep } = require('./lib/expiry');
+const { localDate, isValidDate, isExpired, sweep } = require('./lib/expiry');
 const auth = require('./lib/auth');
 
 const store = createStore(path.join(cfg.dataDir, 'db.json'));
@@ -19,6 +19,7 @@ if (cfg.authDisabled && !['127.0.0.1', 'localhost'].includes(cfg.host)) {
 
 // This app can change security policy, so it checks the Host header (DNS rebinding), accepts only
 // JSON for changes (cross-site forms), and requires a bilan.com sign-in (lib/auth.js).
+app.get('/healthz', (req, res) => res.send('ok')); // App Service health probe: no data, exempt from the host check
 const allowedHosts = new Set([...(process.env.WEBSITE_HOSTNAME ? [process.env.WEBSITE_HOSTNAME.toLowerCase()] : []), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
 app.use((req, res, next) => {
   const host = (req.headers.host || '').toLowerCase();
@@ -31,7 +32,6 @@ app.use((req, res, next) => {
   res.set('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'");
   next();
 });
-app.get('/healthz', (req, res) => res.send('ok')); // App Service health probe (no data)
 app.use(express.json());
 auth.install(app); // /auth/* routes, then everything after this requires sign-in
 app.use(express.static(path.join(__dirname, 'public')));
@@ -65,6 +65,8 @@ app.get('/api/tenants', (req, res) => {
   res.json({
     configured: !!(cfg.clientId && cfg.clientSecret),
     canImport: !!cfg.partnerTenantId,
+    today: localDate(),
+    timezone: cfg.timezone,
     tenants: store.tenants().map((t) => ({
       ...t,
       exclusionCount: store.exclusions(t.tenantId).length,
@@ -117,7 +119,7 @@ async function nameOf(tenantId, userId) {
     const u = await ca.getUser(tenantId, userId);
     name = `${u.displayName} (${u.userPrincipalName})`;
   } catch {
-    return '(a user that no longer exists)';
+    name = '(a user that no longer exists)';
   }
   nameCache.set(key, name);
   return name;
@@ -142,7 +144,10 @@ app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
   res.json({
     tenant: req.tenant,
     ...status,
-    exclusions: tracked.map((x) => ({ ...x, inPolicy: excludedIds.has(x.userId.toLowerCase()) })),
+    exclusions: tracked.map((x) => {
+      const otherPolicy = !!x.policyId && x.policyId.toLowerCase() !== req.tenant.policyId.toLowerCase();
+      return { ...x, otherPolicy, inPolicy: !otherPolicy && excludedIds.has(x.userId.toLowerCase()) };
+    }),
     untracked: status.excluded.filter((m) => !store.findExclusion(t, m.id)),
     audit: await readableAudit(t, store.auditLog(t)),
   });
@@ -225,7 +230,7 @@ function parseTerms(body) {
   const permanent = body.permanent === true;
   if (permanent) return { permanent: true, expiresOn: null };
   const d = body.expiresOn;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '') || Number.isNaN(Date.parse(d))) {
+  if (!isValidDate(d)) {
     throw bad('Choose a removal date, or tick "Permanent"');
   }
   if (d < localDate()) throw bad('Removal date cannot be in the past');
@@ -248,6 +253,7 @@ app.post('/api/tenants/:tenantId/exclusions', wrap(async (req, res) => {
     displayName: user.displayName,
     upn: user.userPrincipalName,
     ...terms,
+    policyId: req.tenant.policyId,
     reason: String(reason || '').slice(0, 300),
     addedAt: store.findExclusion(t, userId)?.addedAt || new Date().toISOString(),
     lastError: null,
@@ -271,7 +277,8 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
   const t = req.tenant.tenantId;
   if (!GUID.test(req.params.userId)) throw bad('userId must be a GUID');
   const ex = store.findExclusion(t, req.params.userId);
-  if (req.tenant.policyId) await ca.removeExcludedUser(t, req.tenant.policyId, req.params.userId);
+  const policyId = (ex && ex.policyId) || req.tenant.policyId;
+  if (policyId) await ca.removeExcludedUser(t, policyId, req.params.userId);
   if (ex) store.deleteExclusion(t, req.params.userId);
   audit(req, t, 'exclusion-removed', ex ? ex.upn : await nameOf(t, req.params.userId));
   res.json({ ok: true });
@@ -279,9 +286,14 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
 
 // ---- Expiry sweeps ---------------------------------------------------------
 
-async function runSweep() {
-  const r = await sweep({ store, removeMember: async (tid, uid) => {
-      const policyId = store.getTenant(tid)?.policyId;
+let sweeping = null; // never run two sweeps at once (a timer tick and a manual click could overlap)
+function runSweep() {
+  return (sweeping ||= doSweep().finally(() => { sweeping = null; }));
+}
+
+async function doSweep() {
+  const r = await sweep({ store, removeMember: async (tid, uid, ex) => {
+      const policyId = (ex && ex.policyId) || store.getTenant(tid)?.policyId;
       if (!policyId) throw new Error('No policy selected for this tenant');
       await ca.removeExcludedUser(tid, policyId, uid);
     } });

@@ -17,7 +17,7 @@ You can also change the policy's state (report-only / on / off) from the app, or
 If a tenant has no US-only policy, the chooser can **create** one (`USA-only Conditional Access`: all users, all apps, block
 unless in the `Allowed - United States` location, report-only).
 
-Dated exclusions stay active through the end of that date (this computer's clock) and a sweep (at startup and every
+Dated exclusions stay active through the end of that date in the app's time zone (`APP_TIMEZONE`, default: the host's; the Azure deployment defaults to America/New_York) and a sweep (at startup and every
 15 min) removes them. **The app must be running for expiry to happen**; it catches up on next start.
 
 Always make your break-glass / emergency accounts **Permanent** exclusions before turning a policy ON.

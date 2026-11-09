@@ -16,6 +16,9 @@ param clientSecret string
 @description('Your bilan.com Directory (tenant) ID. Only this tenant can sign in.')
 param partnerTenantId string
 
+@description('IANA time zone used for "remove after" dates, e.g. America/New_York. Azure runs in UTC, so this matters.')
+param timeZone string = 'America/New_York'
+
 @description('App Service plan size. Needs Basic or higher so Always On keeps the expiry sweep running.')
 param sku string = 'B1'
 
@@ -77,6 +80,7 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AZURE_CLIENT_ID', value: clientId }
         { name: 'AZURE_CLIENT_SECRET', value: '@Microsoft.KeyVault(SecretUri=${secret.properties.secretUri})' }
         { name: 'PARTNER_TENANT_ID', value: partnerTenantId }
+        { name: 'APP_TIMEZONE', value: timeZone }
         { name: 'DATA_DIR', value: '/home/data' } // /home persists across restarts and deployments
         { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'true' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' } // runs npm install on deploy

@@ -2,6 +2,9 @@ const $ = (s) => document.querySelector(s);
 const main = $('#main');
 let tenants = [];
 let current = null; // tenantId
+let appToday = null; // today's date (YYYY-MM-DD) in the server's configured time zone
+let appTz = '';
+let openSeq = 0; // guards against a slow tenant load overwriting a newer one
 
 // Build DOM safely (textContent only — tenant data is never parsed as HTML).
 function h(tag, attrs = {}, ...kids) {
@@ -38,6 +41,8 @@ const sideMsg = (text, cls = '') => { const m = $('#sideMsg'); m.textContent = t
 async function loadTenants() {
   const data = await api('GET', '/api/tenants');
   tenants = data.tenants;
+  appToday = data.today;
+  appTz = data.timezone;
   $('#importGdap').hidden = !data.canImport;
   if (!data.configured) sideMsg('Set real AZURE_CLIENT_ID / AZURE_CLIENT_SECRET values in .env (not the placeholders) and restart.', 'err');
   const ul = $('#tenantList');
@@ -106,18 +111,21 @@ function removeTenantCard(t) {
   return h('div', { class: 'card' },
     h('div', { class: 'row' },
       h('button', { class: 'danger', onclick: () => {
-        if (confirm(`Remove ${t.name} from this app?\n\nThis only removes it from the app. The policy, group and members in the tenant are NOT changed.`)) del(false);
+        if (confirm(`Remove ${t.name} from this app?\n\nThis only removes it from the app. The policy and its excluded users in the tenant are NOT changed.`)) del(false);
       } }, 'Remove tenant from app'), msg));
 }
 
 async function openTenant(tenantId) {
+  const seq = ++openSeq;
   current = tenantId;
   loadTenants();
   main.replaceChildren(h('p', { class: 'muted' }, 'Loading from Microsoft Graph…'));
   try {
     const status = await api('GET', `/api/tenants/${tenantId}/status`);
+    if (seq !== openSeq) return; // user already opened another tenant
     render(status);
   } catch (err) {
+    if (seq !== openSeq) return;
     const t = tenants.find((x) => x.tenantId === tenantId);
     main.replaceChildren(
       h('h2', {}, t ? t.name : tenantId),
@@ -233,7 +241,8 @@ function addForm(t, s, act, say) {
   const reason = h('input', { placeholder: 'Reason (e.g. traveling to Mexico)', size: '40' });
   const btn = h('button', { disabled: true }, 'Add exclusion');
   let users = [];
-  const excluded = new Set(s.exclusions.map((x) => x.userId.toLowerCase()).concat(s.untracked.map((x) => x.id.toLowerCase())));
+  // Hide users already excluded; a tracked user missing from the policy (drift) stays pickable so it can be re-added.
+  const excluded = new Set(s.exclusions.filter((x) => x.inPolicy || x.otherPolicy).map((x) => x.userId.toLowerCase()).concat(s.untracked.map((x) => x.id.toLowerCase())));
 
   const fill = () => {
     const q = filter.value.toLowerCase();
@@ -245,13 +254,10 @@ function addForm(t, s, act, say) {
   filter.addEventListener('input', fill);
   [pick, perm, date].forEach((el) => el.addEventListener('change', sync));
   // Days <-> date (local calendar days). Default: remove after 7 days.
-  const ymd = (d) => d.toLocaleDateString('en-CA');
-  const addDays = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + n); return ymd(d); };
-  const daysUntil = (str) => {
-    const [y, m, d] = str.split('-').map(Number);
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-    return Math.round((new Date(y, m - 1, d) - t0) / 864e5);
-  };
+  const base = () => appToday || new Date().toLocaleDateString('en-CA');
+  const parts = (str) => str.split('-').map(Number);
+  const addDays = (n) => { const [y, m, d] = parts(base()); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+  const daysUntil = (str) => { const [y, m, d] = parts(str); const [by, bm, bd] = parts(base()); return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(by, bm - 1, bd)) / 864e5); };
   date.min = addDays(0);
   date.value = addDays(7);
   days.addEventListener('input', () => {
@@ -278,7 +284,7 @@ function addForm(t, s, act, say) {
       h('label', { class: 'inline' }, '= date ', date),
     ),
     h('label', {}, reason),
-    h('p', { class: 'muted' }, 'A dated exclusion stays active through the end of that day (this computer\'s time) and is removed automatically by the next sweep while this app is running.'),
+    h('p', { class: 'muted' }, `A dated exclusion stays active through the end of that day (${appTz || 'server'} time) and is removed automatically by the next sweep while this app is running.`),
     btn);
   return card;
 }
@@ -379,7 +385,7 @@ function exclusionTable(t, s, act) {
     h('td', {}, x.displayName, h('br'), h('span', { class: 'muted' }, x.upn)),
     h('td', {}, x.permanent ? h('span', { class: 'badge warn' }, 'Permanent') : `Removed after ${x.expiresOn}`),
     signinCell(x.userId),
-    h('td', {}, x.reason || '', !x.inPolicy && h('div', { class: 'err' }, 'Not in the policy\'s Exclude list — drift'), x.lastError && h('div', { class: 'err' }, 'Last error: ' + x.lastError)),
+    h('td', {}, x.reason || '', x.otherPolicy ? h('div', { class: 'muted' }, 'Excluded on a previously selected policy (still tracked and will be removed there)') : !x.inPolicy && h('div', { class: 'err' }, 'Not in the policy\'s Exclude list — re-add the user to repair'), x.lastError && h('div', { class: 'err' }, 'Last error: ' + x.lastError)),
     h('td', {}, fmtDate(x.addedAt)),
     h('td', { class: 'row' },
       h('button', { class: 'secondary', onclick: editTerms(t, x, act) }, 'Edit'),
