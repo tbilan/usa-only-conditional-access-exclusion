@@ -51,6 +51,28 @@ the activity log records who did what.
    Properties → **Assignment required = Yes**, then assign only the people or a group who should manage client tenants.
    Without that, every bilan.com user can open the app and change client Conditional Access policies.
 
+## Run it as a service in Azure (bilan.com subscription)
+
+`infra/main.bicep` + `infra/deploy.ps1` create, in one resource group: a Linux **App Service** (Node 22, Always On, HTTPS only,
+health check `/healthz`), and a **Key Vault** that holds the client secret (the web app reads it through its managed identity).
+Data (`db.json`, session key) lives on the App Service's persistent `/home/data`. Keep it at **one instance**: the data is a
+JSON file and the instance runs the expiry sweep. Plan size B1 (about $13/month) is enough.
+
+1. Install Azure CLI, run `az login` as an Owner (or Contributor + User Access Administrator) of the target subscription.
+2. From the repo root:
+   ```powershell
+   .\infra\deploy.ps1 -AppName <unique-name> -ClientId <app registration client id> -PartnerTenantId <bilan.com tenant id>
+   ```
+   It asks for the client secret value, deploys, and prints the site URL and two redirect URIs.
+3. On the app registration → Authentication, add those two **Web** redirect URIs
+   (`https://<site>/auth/callback` and `https://<site>/consent-done.html`).
+4. Set **Assignment required = Yes** on the Enterprise application and assign the people who may use it (see Sign-in above).
+5. Move your existing data: stop the local copy, then upload `data/db.json` to `/home/data/` on the web app
+   (Kudu: `https://<site-scm-host>/newui/fileManager`, or `az webapp ssh`). Otherwise re-add tenants and re-pick policies.
+6. To update later: `git pull`, commit, and run `az webapp deploy -g <rg> -n <app> --src-path <zip> --type zip` (the script does this).
+
+Consent links for customer tenants now use the site address, so send admins links from the hosted app.
+
 ## Notes
 
 - Listens on `127.0.0.1` unless you set `HOST`. Rejects foreign `Host` headers and non-JSON writes; every page and API call except the sign-in routes needs a valid session.

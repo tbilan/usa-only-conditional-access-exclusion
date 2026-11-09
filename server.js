@@ -19,7 +19,7 @@ if (cfg.authDisabled && !['127.0.0.1', 'localhost'].includes(cfg.host)) {
 
 // This app can change security policy, so it checks the Host header (DNS rebinding), accepts only
 // JSON for changes (cross-site forms), and requires a bilan.com sign-in (lib/auth.js).
-const allowedHosts = new Set([`localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
+const allowedHosts = new Set([...(process.env.WEBSITE_HOSTNAME ? [process.env.WEBSITE_HOSTNAME.toLowerCase()] : []), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
 app.use((req, res, next) => {
   const host = (req.headers.host || '').toLowerCase();
   if (!allowedHosts.has(host)) {
@@ -31,6 +31,7 @@ app.use((req, res, next) => {
   res.set('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'");
   next();
 });
+app.get('/healthz', (req, res) => res.send('ok')); // App Service health probe (no data)
 app.use(express.json());
 auth.install(app); // /auth/* routes, then everything after this requires sign-in
 app.use(express.static(path.join(__dirname, 'public')));
@@ -56,7 +57,7 @@ app.param('tenantId', (req, res, next, id) => {
 
 const consentUrl = (tenantId) =>
   `https://login.microsoftonline.com/${tenantId}/adminconsent?client_id=${encodeURIComponent(cfg.clientId)}` +
-  `&redirect_uri=${encodeURIComponent(`http://localhost:${cfg.port}/consent-done.html`)}`;
+  `&redirect_uri=${encodeURIComponent(`${cfg.baseUrl}/consent-done.html`)}`;
 
 // ---- Tenants ---------------------------------------------------------------
 
