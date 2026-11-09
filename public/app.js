@@ -392,7 +392,7 @@ function exclusionTable(t, s, act) {
 function untrackedTable(t, s, act) {
   return h('div', { class: 'card' }, h('h2', {}, `Excluded in the policy but not tracked (${s.untracked.length})`),
     h('p', { class: 'muted' }, 'These users were excluded outside this app, so they have no removal date. Give them one (or mark permanent), or remove them from the policy.'),
-    h('table', {}, h('tbody', {}, s.untracked.map((m) => h('tr', {},
+    h('table', {}, h('thead', {}, h('tr', {}, ['User', 'Last 5 sign-ins', ''].map((c) => h('th', {}, c)))), h('tbody', {}, s.untracked.map((m) => h('tr', {},
       h('td', {}, m.displayName || m.id, h('br'), h('span', { class: 'muted' }, m.userPrincipalName || '')),
       signinCell(m.id),
       h('td', { class: 'row' },
