@@ -11,7 +11,10 @@ function h(tag, attrs = {}, ...kids) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
   }
-  for (const kid of kids.flat()) el.append(kid instanceof Node ? kid : document.createTextNode(kid ?? ''));
+  for (const kid of kids.flat()) {
+    if (kid === false || kid == null) continue; // skip `cond && node` results
+    el.append(kid instanceof Node ? kid : document.createTextNode(kid));
+  }
   return el;
 }
 
