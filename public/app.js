@@ -158,12 +158,9 @@ function render(s) {
         } }, 'Turn ON'),
       s.policy && st !== 'disabled' &&
         h('button', { class: 'secondary', onclick: act(() => api('PATCH', `${base}/policy`, { state: 'off' })) }, 'Turn OFF'),
-      h('button', { class: 'secondary', onclick: () => { if (confirm('Stop managing this policy and choose a different one?\n\nThe exclusions group stays on the old policy.')) act(() => api('DELETE', `${base}/policy/select`))(); } }, 'Change policy')),
-    h('p', { class: 'muted' }, `Exclusions group: ${s.group ? s.group.displayName : '—'}`),
+      h('button', { class: 'secondary', onclick: () => { if (confirm('Stop managing this policy and choose a different one?\n\nUsers already excluded stay excluded on the old policy.')) act(() => api('DELETE', `${base}/policy/select`))(); } }, 'Change policy')),
+    h('p', { class: 'muted' }, `Users excluded in this policy: ${s.excluded.length}`),
     s.drift.map((d) => h('p', { class: 'err' }, '⚠ ' + d)),
-    s.drift.length && s.policy
-      ? h('button', { onclick: act(() => api('POST', `${base}/policy/select`, { policyId: s.policy.id }), 'Repaired.') }, 'Repair')
-      : '',
     msg
   );
 
@@ -181,7 +178,7 @@ async function renderChooser(t, act, msg) {
   const base = `/api/tenants/${t.tenantId}`;
   const card = h('div', { class: 'card' }, h('h2', {}, t.name),
     h('p', {}, 'Which existing Conditional Access policy enforces US-only sign-ins in this tenant?'),
-    h('p', { class: 'muted' }, 'Choosing one adds the "USA-only CA Exclusions" group to that policy\'s excluded groups (creating the group if needed). Nothing else on the policy is changed.'),
+    h('p', { class: 'muted' }, 'Choosing a policy changes nothing in the tenant. Users you exclude later are added directly to that policy\'s Exclude → Users list.'),
     h('p', { class: 'muted' }, 'Discovering policies…'));
   main.replaceChildren(card);
 
@@ -281,7 +278,7 @@ function exclusionTable(t, s, act) {
   const rows = s.exclusions.map((x) => h('tr', {},
     h('td', {}, x.displayName, h('br'), h('span', { class: 'muted' }, x.upn)),
     h('td', {}, x.permanent ? h('span', { class: 'badge warn' }, 'Permanent') : `Removed after ${x.expiresOn}`),
-    h('td', {}, x.reason || '', !x.inGroup && h('div', { class: 'err' }, 'Not in group — drift'), x.lastError && h('div', { class: 'err' }, 'Last error: ' + x.lastError)),
+    h('td', {}, x.reason || '', !x.inPolicy && h('div', { class: 'err' }, 'Not in the policy\'s Exclude list — drift'), x.lastError && h('div', { class: 'err' }, 'Last error: ' + x.lastError)),
     h('td', {}, fmtDate(x.addedAt)),
     h('td', { class: 'row' },
       h('button', { class: 'secondary', onclick: editTerms(t, x, act) }, 'Edit'),
@@ -293,8 +290,8 @@ function exclusionTable(t, s, act) {
 }
 
 function untrackedTable(t, s, act) {
-  return h('div', { class: 'card' }, h('h2', {}, `In the group but not tracked (${s.untracked.length})`),
-    h('p', { class: 'muted' }, 'These members were added outside this app, so they have no removal date. Give them one, or remove them.'),
+  return h('div', { class: 'card' }, h('h2', {}, `Excluded in the policy but not tracked (${s.untracked.length})`),
+    h('p', { class: 'muted' }, 'These users were excluded outside this app, so they have no removal date. Give them one (or mark permanent), or remove them from the policy.'),
     h('table', {}, h('tbody', {}, s.untracked.map((m) => h('tr', {},
       h('td', {}, m.displayName || m.id, h('br'), h('span', { class: 'muted' }, m.userPrincipalName || '')),
       h('td', { class: 'row' },
@@ -302,9 +299,9 @@ function untrackedTable(t, s, act) {
           const d = prompt('Removal date (YYYY-MM-DD), or "permanent":', 'permanent');
           if (d === null) return;
           const permanent = d.trim().toLowerCase() === 'permanent';
-          act(() => api('POST', `/api/tenants/${t.tenantId}/exclusions`, { userId: m.id, permanent, expiresOn: permanent ? null : d.trim(), reason: 'Adopted from group' }))();
+          act(() => api('POST', `/api/tenants/${t.tenantId}/exclusions`, { userId: m.id, permanent, expiresOn: permanent ? null : d.trim(), reason: 'Existing exclusion' }))();
         } }, 'Track…'),
-        h('button', { class: 'secondary', onclick: () => { if (confirm(`Remove ${m.userPrincipalName || m.id} from the group?`)) act(() => api('DELETE', `/api/tenants/${t.tenantId}/exclusions/${m.id}`))(); } }, 'Remove')))))));
+        h('button', { class: 'secondary', onclick: () => { if (confirm(`Remove ${m.userPrincipalName || m.id} from the policy\'s Exclude list?`)) act(() => api('DELETE', `/api/tenants/${t.tenantId}/exclusions/${m.id}`))(); } }, 'Remove')))))));
 }
 
 function auditCard(s) {

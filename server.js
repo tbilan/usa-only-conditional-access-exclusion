@@ -69,8 +69,8 @@ app.post('/api/tenants', wrap(async (req, res) => {
   res.status(201).json({ ok: true });
 }));
 
-// Removes the tenant from THIS app only. Nothing is changed in Entra (policy, group and group
-// members stay as they are). Tracked exclusions would stop expiring, so require force if any exist.
+// Removes the tenant from THIS app only. Nothing is changed in Entra (the policy and its
+// excluded users stay as they are). Tracked exclusions would stop expiring, so require force if any exist.
 app.delete('/api/tenants/:tenantId', wrap(async (req, res) => {
   const n = store.exclusions(req.tenant.tenantId).length;
   if (n && req.body?.force !== true) {
@@ -99,12 +99,12 @@ app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
   if (!req.tenant.policyId) return res.json({ tenant: req.tenant, needsPolicy: true });
   const status = await ca.getStatus(t, req.tenant.policyId);
   const tracked = store.exclusions(t);
-  const memberIds = new Set(status.members.map((m) => m.id.toLowerCase()));
+  const excludedIds = new Set(status.excluded.map((m) => m.id.toLowerCase()));
   res.json({
     tenant: req.tenant,
     ...status,
-    exclusions: tracked.map((x) => ({ ...x, inGroup: memberIds.has(x.userId.toLowerCase()) })),
-    untracked: status.members.filter((m) => !store.findExclusion(t, m.id)),
+    exclusions: tracked.map((x) => ({ ...x, inPolicy: excludedIds.has(x.userId.toLowerCase()) })),
+    untracked: status.excluded.filter((m) => !store.findExclusion(t, m.id)),
     audit: store.auditLog(t),
   });
 }));
@@ -114,15 +114,16 @@ app.get('/api/tenants/:tenantId/policies', wrap(async (req, res) => {
   res.json(await ca.listPolicies(req.tenant.tenantId));
 }));
 
-// Choose which existing policy is "the US-only policy" for this tenant. This creates the
-// exclusions group if needed and adds it to that policy's excluded groups (nothing else changes).
+// Choose which existing policy is "the US-only policy" for this tenant. Nothing is modified in
+// the tenant: excluded users are added directly to this policy's Exclude -> Users list later.
 app.post('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
   const policyId = req.body?.policyId;
   if (!GUID.test(policyId || '')) throw bad('policyId must be a GUID');
-  const r = await ca.attachGroup(req.tenant.tenantId, policyId);
-  store.setTenantPolicy(req.tenant.tenantId, r.policyId, r.policyName);
-  store.audit(req.tenant.tenantId, 'policy-selected', `Using policy "${r.policyName}"; exclusions group attached`);
-  res.json(r);
+  const policy = await ca.getPolicy(req.tenant.tenantId, policyId);
+  if (!policy) throw bad('Policy not found in this tenant', 404);
+  store.setTenantPolicy(req.tenant.tenantId, policy.id, policy.displayName);
+  store.audit(req.tenant.tenantId, 'policy-selected', `Using policy "${policy.displayName}"`);
+  res.json({ policyId: policy.id });
 }));
 
 // Create a new US-only policy (for tenants that don't already have one).
@@ -134,7 +135,7 @@ app.post('/api/tenants/:tenantId/policy/create', wrap(async (req, res) => {
   res.json(r);
 }));
 
-// Forget the chosen policy so another can be picked (the old policy keeps its group exclusion).
+// Forget the chosen policy so another can be picked (users already excluded stay excluded on the old policy).
 app.delete('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
   store.setTenantPolicy(req.tenant.tenantId, undefined, undefined);
   store.audit(req.tenant.tenantId, 'policy-unlinked', `Stopped managing "${req.tenant.policyName}"`);
@@ -175,10 +176,9 @@ app.post('/api/tenants/:tenantId/exclusions', wrap(async (req, res) => {
   if (!GUID.test(userId || '')) throw bad('userId must be a GUID');
   const terms = parseTerms(req.body);
 
-  const group = await ca.findGroup(t);
-  if (!group) throw bad('Choose a policy for this tenant first', 409);
+  if (!req.tenant.policyId) throw bad('Choose a policy for this tenant first', 409);
   const user = await ca.getUser(t, userId);
-  await ca.addMember(t, group.id, userId);
+  await ca.addExcludedUser(t, req.tenant.policyId, userId);
 
   store.upsertExclusion({
     tenantId: t,
@@ -209,7 +209,7 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
   const t = req.tenant.tenantId;
   if (!GUID.test(req.params.userId)) throw bad('userId must be a GUID');
   const ex = store.findExclusion(t, req.params.userId);
-  await ca.removeMemberByTenant(t, req.params.userId);
+  if (req.tenant.policyId) await ca.removeExcludedUser(t, req.tenant.policyId, req.params.userId);
   if (ex) store.deleteExclusion(t, req.params.userId);
   store.audit(t, 'exclusion-removed', ex ? ex.upn : req.params.userId);
   res.json({ ok: true });
@@ -218,7 +218,11 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
 // ---- Expiry sweeps ---------------------------------------------------------
 
 async function runSweep() {
-  const r = await sweep({ store, removeMember: ca.removeMemberByTenant });
+  const r = await sweep({ store, removeMember: async (tid, uid) => {
+      const policyId = store.getTenant(tid)?.policyId;
+      if (!policyId) throw new Error('No policy selected for this tenant');
+      await ca.removeExcludedUser(tid, policyId, uid);
+    } });
   if (r.removed.length || r.failed.length) {
     console.log(`[sweep] removed ${r.removed.length}, failed ${r.failed.length}`);
     r.failed.forEach((f) => console.error(`[sweep] ${f.upn} (${f.tenantId}): ${f.error}`));

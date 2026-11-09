@@ -8,18 +8,19 @@ each exclusion with either a **removal date** or a **Permanent** checkbox. Expir
 
 Each tenant already has its own US-only policy, possibly under a different name. The first time you open a tenant the app
 lists its Conditional Access policies (likely US-only ones are flagged) and you pick the right one; the choice is remembered.
-The app then creates a security group `USA-only CA Exclusions` (if missing) and adds it to that policy's **excluded groups** —
-nothing else on the policy is changed.
+Choosing a policy changes nothing in the tenant.
 
-Excluding a user = adding them to the group; removing the exclusion = removing them. You can also change the policy's state
-(report-only / on / off) from the app, or "Change policy" to point the tenant at a different one.
+Excluding a user adds them **directly to that policy's Exclude → Users list**; removing the exclusion takes them out.
+Users already excluded in the policy appear as "not tracked" so you can give them a removal date or mark them permanent.
+You can also change the policy's state (report-only / on / off) from the app, or "Change policy" to point at a different one.
 
-If a tenant has no US-only policy, the chooser has a button to **create** one (`USA-only Conditional Access`: all users,
-all apps, block unless in the `Allowed - United States` location, report-only) with the exclusions group attached.
+If a tenant has no US-only policy, the chooser can **create** one (`USA-only Conditional Access`: all users, all apps, block
+unless in the `Allowed - United States` location, report-only).
+
 Dated exclusions stay active through the end of that date (this computer's clock) and a sweep (at startup and every
 15 min) removes them. **The app must be running for expiry to happen**; it catches up on next start.
 
-Always add your break-glass / emergency accounts as **Permanent** exclusions before turning the policy ON.
+Always make your break-glass / emergency accounts **Permanent** exclusions before turning a policy ON.
 
 ## Setup
 
@@ -27,7 +28,7 @@ Always add your break-glass / emergency accounts as **Permanent** exclusions bef
    - Redirect URI (Web): `http://localhost:3000/consent-done.html`
    - Create a client secret.
    - API permissions → Microsoft Graph → **Application** permissions:
-     `Policy.ReadWrite.ConditionalAccess`, `Policy.Read.All`, `Application.Read.All`, `Group.ReadWrite.All`, `User.Read.All`,
+     `Policy.ReadWrite.ConditionalAccess`, `Policy.Read.All`, `Application.Read.All`, `User.Read.All`,
      and (only for GDAP import) `DelegatedAdminRelationship.Read.All`. Grant admin consent in your own tenant.
 2. `cp .env.example .env` and fill in `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `PARTNER_TENANT_ID`.
 3. `npm install && npm start`, then open <http://localhost:3000>.
@@ -39,5 +40,4 @@ Always add your break-glass / emergency accounts as **Permanent** exclusions bef
 
 - Listens on `127.0.0.1` only; rejects foreign `Host` headers and non-JSON writes. There is no login, so run it on a machine only you use.
 - Secrets live in `.env` (git-ignored). Tracked exclusions and the audit log live in `data/db.json` (git-ignored).
-- Members added to the group outside the app show up as "not tracked" so you can give them a date.
 - `npm test` runs the expiry tests.
