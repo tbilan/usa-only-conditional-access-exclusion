@@ -1,0 +1,19 @@
+{
+  "name": "usa-only-conditional-access-exclusion",
+  "version": "1.0.0",
+  "description": "Local web app to manage a US-only Conditional Access policy and its time-boxed user exclusions across multiple Microsoft Entra tenants.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USA-only Conditional Access Exclusion</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><h1>USA-only Conditional Access Exclusion</h1></header>
+  <div class="layout">
+    <aside>
+      <h2>Tenants</h2>
+      <ul id="tenantList"></ul>
+      <details>
+        <summary>Add tenant</summary>
+        <form id="addTenant">
+          <label>Name <input name="name" required></label>
+          <label>Tenant ID <input name="tenantId" required placeholder="GUID"></label>
+          <button>Add</button>
+        </form>
+      </details>
+      <button id="importGdap" class="secondary" hidden>Import from GDAP</button>
+      <button id="sweepNow" class="secondary">Run expiry sweep now</button>
+      <p id="sideMsg" class="msg"></p>
+    </aside>
+    <main id="main"><p class="muted">Select a tenant.</p></main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
