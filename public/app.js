@@ -226,6 +226,7 @@ function addForm(t, s, act, say) {
   const pick = h('select', { size: '8', 'aria-label': 'Users' }, h('option', { disabled: true }, 'Loading users…'));
   const perm = h('input', { type: 'checkbox' });
   const date = h('input', { type: 'date', required: true });
+  const days = h('input', { type: 'number', min: '0', max: '3650', step: '1', value: '7', size: '4', style: 'width:5em', 'aria-label': 'Number of days' });
   const reason = h('input', { placeholder: 'Reason (e.g. traveling to Mexico)', size: '40' });
   const btn = h('button', { disabled: true }, 'Add exclusion');
   let users = [];
@@ -237,12 +238,25 @@ function addForm(t, s, act, say) {
     pick.replaceChildren(...shown.map((u) => h('option', { value: u.id }, `${u.displayName} — ${u.upn}${u.enabled === false ? ' (disabled)' : ''}${u.userType === 'Guest' ? ' (guest)' : ''}`)));
     if (!shown.length) pick.append(h('option', { disabled: true }, 'No matching users'));
   };
-  const sync = () => { date.disabled = perm.checked; date.required = !perm.checked; btn.disabled = !pick.value || (!perm.checked && !date.value); };
+  const sync = () => { date.disabled = days.disabled = perm.checked; date.required = !perm.checked; btn.disabled = !pick.value || (!perm.checked && !date.value); };
   filter.addEventListener('input', fill);
   [pick, perm, date].forEach((el) => el.addEventListener('change', sync));
-  const tomorrow = new Date(Date.now() + 864e5);
-  date.min = new Date().toLocaleDateString('en-CA');
-  date.value = tomorrow.toLocaleDateString('en-CA');
+  // Days <-> date (local calendar days). Default: remove after 7 days.
+  const ymd = (d) => d.toLocaleDateString('en-CA');
+  const addDays = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + n); return ymd(d); };
+  const daysUntil = (str) => {
+    const [y, m, d] = str.split('-').map(Number);
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    return Math.round((new Date(y, m - 1, d) - t0) / 864e5);
+  };
+  date.min = addDays(0);
+  date.value = addDays(7);
+  days.addEventListener('input', () => {
+    const n = parseInt(days.value, 10);
+    if (Number.isFinite(n) && n >= 0) date.value = addDays(n);
+    sync();
+  });
+  date.addEventListener('input', () => { if (date.value) days.value = String(Math.max(0, daysUntil(date.value))); sync(); });
 
   btn.addEventListener('click', act(async () => {
     await api('POST', `/api/tenants/${t.tenantId}/exclusions`, {
@@ -257,7 +271,8 @@ function addForm(t, s, act, say) {
   card.append(filter, pick,
     h('div', { class: 'row' },
       h('label', { class: 'inline' }, perm, 'Permanent'),
-      h('label', { class: 'inline' }, 'Removed after ', date),
+      h('label', { class: 'inline' }, 'Remove after ', days, ' days'),
+      h('label', { class: 'inline' }, '= date ', date),
     ),
     h('label', {}, reason),
     h('p', { class: 'muted' }, 'A dated exclusion stays active through the end of that day (this computer\'s time) and is removed automatically by the next sweep while this app is running.'),
