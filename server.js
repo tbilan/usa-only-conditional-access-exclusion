@@ -151,6 +151,33 @@ app.patch('/api/tenants/:tenantId/policy', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- Recent sign-in countries for the users excluded in the chosen policy ----
+// Needs the AuditLog.Read.All application permission and Entra ID P1/P2 in the tenant.
+const signInCache = new Map(); // tenantId -> { at, data }
+
+app.get('/api/tenants/:tenantId/signins', wrap(async (req, res) => {
+  const t = req.tenant.tenantId;
+  if (!req.tenant.policyId) throw bad('Choose a policy first', 409);
+  const hit = signInCache.get(t);
+  if (hit && Date.now() - hit.at < 5 * 60_000 && req.query.refresh !== '1') return res.json(hit.data);
+
+  const policy = await ca.getPolicy(t, req.tenant.policyId);
+  const ids = ((policy && policy.conditions?.users?.excludeUsers) || []).filter((u) => GUID.test(u)).slice(0, 100);
+  const data = {};
+  try {
+    for (let i = 0; i < ids.length; i += 5) {
+      await Promise.all(ids.slice(i, i + 5).map(async (id) => { data[id.toLowerCase()] = await ca.recentSignIns(t, id, 5); }));
+    }
+  } catch (e) {
+    if (e.status === 403) {
+      throw bad('Sign-in logs need the AuditLog.Read.All application permission on the app (granted in this tenant) and Entra ID P1/P2 licensing.', 403);
+    }
+    throw e;
+  }
+  signInCache.set(t, { at: Date.now(), data });
+  res.json(data);
+}));
+
 // ---- Users picklist --------------------------------------------------------
 
 app.get('/api/tenants/:tenantId/users', wrap(async (req, res) => {

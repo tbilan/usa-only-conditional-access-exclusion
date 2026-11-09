@@ -28,7 +28,7 @@ Always make your break-glass / emergency accounts **Permanent** exclusions befor
    - Redirect URI (Web): `http://localhost:3000/consent-done.html`
    - Create a client secret.
    - API permissions → Microsoft Graph → **Application** permissions:
-     `Policy.ReadWrite.ConditionalAccess`, `Policy.Read.All`, `Application.Read.All`, `User.Read.All`,
+     `Policy.ReadWrite.ConditionalAccess`, `Policy.Read.All`, `Application.Read.All`, `User.Read.All`, `AuditLog.Read.All` (for the "last 5 sign-ins" column; the tenant also needs Entra ID P1/P2),
      and (only for GDAP import) `DelegatedAdminRelationship.Read.All`. Grant admin consent in your own tenant.
 2. `cp .env.example .env` and fill in `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `PARTNER_TENANT_ID`.
 3. `npm install && npm start`, then open <http://localhost:3000>.

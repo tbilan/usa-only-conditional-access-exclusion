@@ -139,6 +139,7 @@ function render(s) {
   };
   const base = `/api/tenants/${t.tenantId}`;
 
+  signinCells.clear();
   if (s.needsPolicy) return renderChooser(t, act, msg);
 
   const state = s.policy && STATE_LABEL[s.policy.state];
@@ -169,6 +170,7 @@ function render(s) {
     main.append(addForm(t, s, act, say), exclusionTable(t, s, act, say));
     if (s.untracked.length) main.append(untrackedTable(t, s, act, say));
     main.append(auditCard(s));
+    loadSignins(t.tenantId);
   }
   main.append(removeTenantCard(t));
 }
@@ -289,10 +291,44 @@ function editTerms(t, x, act) {
   };
 }
 
+// ---- Recent sign-in countries ----------------------------------------------
+const regionName = (() => { try { const n = new Intl.DisplayNames(['en'], { type: 'region' }); return (c) => n.of(c) || c; } catch { return (c) => c; } })();
+const signinCells = new Map(); // lower-case userId -> <td>
+
+function signinCell(userId) {
+  const td = h('td', { class: 'signins' }, h('span', { class: 'muted' }, 'Loading…'));
+  signinCells.set(userId.toLowerCase(), td);
+  return td;
+}
+
+function fillSignins(data) {
+  for (const [id, td] of signinCells) {
+    const list = data[id];
+    if (!td.isConnected) continue;
+    if (!list) { td.replaceChildren(h('span', { class: 'muted' }, 'n/a')); continue; }
+    if (!list.length) { td.replaceChildren(h('span', { class: 'muted' }, 'No sign-ins found')); continue; }
+    td.replaceChildren(...list.map((x) => {
+      const where = x.country ? regionName(x.country) : 'Unknown location';
+      const foreign = x.country && x.country !== 'US';
+      return h('div', { class: foreign || !x.country ? 'err' : '', title: `${x.ip || ''} ${x.app || ''}`.trim() },
+        `${where}${x.city ? ' (' + x.city + ')' : ''} · ${new Date(x.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${x.ok ? '' : ' · failed'}`);
+    }));
+  }
+}
+
+async function loadSignins(tenantId, refresh) {
+  try {
+    fillSignins(await api('GET', `/api/tenants/${tenantId}/signins${refresh ? '?refresh=1' : ''}`));
+  } catch (err) {
+    for (const td of signinCells.values()) if (td.isConnected) td.replaceChildren(h('span', { class: 'err' }, err.message));
+  }
+}
+
 function exclusionTable(t, s, act) {
   const rows = s.exclusions.map((x) => h('tr', {},
     h('td', {}, x.displayName, h('br'), h('span', { class: 'muted' }, x.upn)),
     h('td', {}, x.permanent ? h('span', { class: 'badge warn' }, 'Permanent') : `Removed after ${x.expiresOn}`),
+    signinCell(x.userId),
     h('td', {}, x.reason || '', !x.inPolicy && h('div', { class: 'err' }, 'Not in the policy\'s Exclude list — drift'), x.lastError && h('div', { class: 'err' }, 'Last error: ' + x.lastError)),
     h('td', {}, fmtDate(x.addedAt)),
     h('td', { class: 'row' },
@@ -300,7 +336,7 @@ function exclusionTable(t, s, act) {
       h('button', { class: 'secondary', onclick: () => { if (confirm(`Remove exclusion for ${x.upn}?`)) act(() => api('DELETE', `/api/tenants/${t.tenantId}/exclusions/${x.userId}`))(); } }, 'Remove'))));
   return h('div', { class: 'card' }, h('h2', {}, `Exclusions (${s.exclusions.length})`),
     s.exclusions.length
-      ? h('table', {}, h('thead', {}, h('tr', {}, ['User', 'Term', 'Reason', 'Added', ''].map((c) => h('th', {}, c)))), h('tbody', {}, rows))
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['User', 'Term', 'Last 5 sign-ins', 'Reason', 'Added', ''].map((c) => h('th', {}, c)))), h('tbody', {}, rows))
       : h('p', { class: 'muted' }, 'Nobody is excluded — everyone is held to US-only.'));
 }
 
@@ -309,6 +345,7 @@ function untrackedTable(t, s, act) {
     h('p', { class: 'muted' }, 'These users were excluded outside this app, so they have no removal date. Give them one (or mark permanent), or remove them from the policy.'),
     h('table', {}, h('tbody', {}, s.untracked.map((m) => h('tr', {},
       h('td', {}, m.displayName || m.id, h('br'), h('span', { class: 'muted' }, m.userPrincipalName || '')),
+      signinCell(m.id),
       h('td', { class: 'row' },
         h('button', { class: 'secondary', onclick: () => {
           const d = prompt('Removal date (YYYY-MM-DD), or "permanent":', 'permanent');
