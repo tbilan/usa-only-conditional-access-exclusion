@@ -6,16 +6,16 @@ each exclusion with either a **removal date** or a **Permanent** checkbox. Expir
 
 ## How it works (per tenant)
 
-The app provisions three objects in each tenant (idempotent, found again by name):
+Each tenant already has its own US-only policy, possibly under a different name. The first time you open a tenant the app
+lists its Conditional Access policies (likely US-only ones are flagged) and you pick the right one; the choice is remembered.
+The app then creates a security group `USA-only CA Exclusions` (if missing) and adds it to that policy's **excluded groups** —
+nothing else on the policy is changed.
 
-| Object | Name |
-|---|---|
-| Named location (country: US) | `Allowed - United States` |
-| Security group (the exclusion list) | `USA-only CA Exclusions` |
-| Conditional Access policy | `USA-only Conditional Access` — all users, all apps, **block** unless in the US location; excludes the group |
+Excluding a user = adding them to the group; removing the exclusion = removing them. You can also change the policy's state
+(report-only / on / off) from the app, or "Change policy" to point the tenant at a different one.
 
-Excluding a user = adding them to the group; removing the exclusion = removing them. The policy is created in
-**report-only** mode; review the Entra sign-in logs, then press **Turn ON**.
+If a tenant has no US-only policy, the chooser has a button to **create** one (`USA-only Conditional Access`: all users,
+all apps, block unless in the `Allowed - United States` location, report-only) with the exclusions group attached.
 Dated exclusions stay active through the end of that date (this computer's clock) and a sweep (at startup and every
 15 min) removes them. **The app must be running for expiry to happen**; it catches up on next start.
 

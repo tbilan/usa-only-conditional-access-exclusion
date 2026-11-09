@@ -55,6 +55,7 @@ app.get('/api/tenants', (req, res) => {
     tenants: store.tenants().map((t) => ({
       ...t,
       exclusionCount: store.exclusions(t.tenantId).length,
+      policyChosen: !!t.policyId,
       consentUrl: consentUrl(t.tenantId),
     })),
   });
@@ -92,7 +93,8 @@ app.post('/api/tenants/import-gdap', wrap(async (req, res) => {
 
 app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
   const t = req.tenant.tenantId;
-  const status = await ca.getStatus(t);
+  if (!req.tenant.policyId) return res.json({ tenant: req.tenant, needsPolicy: true });
+  const status = await ca.getStatus(t, req.tenant.policyId);
   const tracked = store.exclusions(t);
   const memberIds = new Set(status.members.map((m) => m.id.toLowerCase()));
   res.json({
@@ -104,18 +106,44 @@ app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
   });
 }));
 
-app.post('/api/tenants/:tenantId/provision', wrap(async (req, res) => {
-  const mode = req.body?.mode === 'on' ? 'on' : 'reportOnly';
-  const r = await ca.provision(req.tenant.tenantId, mode);
-  store.audit(req.tenant.tenantId, 'provisioned', `Policy/group/location ensured (new policy mode: ${mode})`);
+// Discover the tenant's existing Conditional Access policies so one can be chosen.
+app.get('/api/tenants/:tenantId/policies', wrap(async (req, res) => {
+  res.json(await ca.listPolicies(req.tenant.tenantId));
+}));
+
+// Choose which existing policy is "the US-only policy" for this tenant. This creates the
+// exclusions group if needed and adds it to that policy's excluded groups (nothing else changes).
+app.post('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
+  const policyId = req.body?.policyId;
+  if (!GUID.test(policyId || '')) throw bad('policyId must be a GUID');
+  const r = await ca.attachGroup(req.tenant.tenantId, policyId);
+  store.setTenantPolicy(req.tenant.tenantId, r.policyId, r.policyName);
+  store.audit(req.tenant.tenantId, 'policy-selected', `Using policy "${r.policyName}"; exclusions group attached`);
   res.json(r);
+}));
+
+// Create a new US-only policy (for tenants that don't already have one).
+app.post('/api/tenants/:tenantId/policy/create', wrap(async (req, res) => {
+  const mode = req.body?.mode === 'on' ? 'on' : 'reportOnly';
+  const r = await ca.createPolicy(req.tenant.tenantId, mode);
+  store.setTenantPolicy(req.tenant.tenantId, r.policyId, r.policyName);
+  store.audit(req.tenant.tenantId, 'policy-created', `Created "${r.policyName}" (${mode})`);
+  res.json(r);
+}));
+
+// Forget the chosen policy so another can be picked (the old policy keeps its group exclusion).
+app.delete('/api/tenants/:tenantId/policy/select', wrap(async (req, res) => {
+  store.setTenantPolicy(req.tenant.tenantId, undefined, undefined);
+  store.audit(req.tenant.tenantId, 'policy-unlinked', `Stopped managing "${req.tenant.policyName}"`);
+  res.json({ ok: true });
 }));
 
 app.patch('/api/tenants/:tenantId/policy', wrap(async (req, res) => {
   const state = req.body?.state;
   if (!['reportOnly', 'on', 'off'].includes(state)) throw bad('state must be reportOnly, on or off');
-  await ca.setPolicyState(req.tenant.tenantId, state);
-  store.audit(req.tenant.tenantId, 'policy-state', `Policy set to ${state}`);
+  if (!req.tenant.policyId) throw bad('Choose a policy first', 409);
+  await ca.setPolicyState(req.tenant.tenantId, req.tenant.policyId, state);
+  store.audit(req.tenant.tenantId, 'policy-state', `"${req.tenant.policyName}" set to ${state}`);
   res.json({ ok: true });
 }));
 
@@ -145,7 +173,7 @@ app.post('/api/tenants/:tenantId/exclusions', wrap(async (req, res) => {
   const terms = parseTerms(req.body);
 
   const group = await ca.findGroup(t);
-  if (!group) throw bad('Provision the policy for this tenant first', 409);
+  if (!group) throw bad('Choose a policy for this tenant first', 409);
   const user = await ca.getUser(t, userId);
   await ca.addMember(t, group.id, userId);
 

@@ -112,34 +112,79 @@ function render(s) {
     try { await fn(); await openTenant(t.tenantId); } catch (err) { say(err.message, 'err'); return; }
     if (okText) say(okText, 'good');
   };
+  const base = `/api/tenants/${t.tenantId}`;
+
+  if (s.needsPolicy) return renderChooser(t, act, msg);
 
   const state = s.policy && STATE_LABEL[s.policy.state];
+  const st = s.policy && s.policy.state;
   const policyCard = h('div', { class: 'card' },
     h('h2', {}, t.name),
     h('div', { class: 'row' },
       h('span', {}, 'Policy: '),
-      state ? h('span', { class: 'badge ' + state[1] }, state[0]) : h('span', { class: 'badge bad' }, 'Not provisioned'),
-      !s.provisioned && h('button', { onclick: act(() => api('POST', `/api/tenants/${t.tenantId}/provision`, { mode: 'reportOnly' }), 'Provisioned in report-only mode.') }, 'Provision (report-only)'),
-      s.provisioned && s.policy.state !== 'reportOnly' && s.policy.state !== 'enabledForReportingButNotEnforced' &&
-        h('button', { class: 'secondary', onclick: act(() => api('PATCH', `/api/tenants/${t.tenantId}/policy`, { state: 'reportOnly' })) }, 'Set report-only'),
-      s.provisioned && s.policy.state !== 'enabled' &&
+      h('strong', {}, s.policy ? s.policy.displayName : (t.policyName || '(missing)')),
+      state ? h('span', { class: 'badge ' + state[1] }, state[0]) : h('span', { class: 'badge bad' }, 'Not found'),
+      s.policy && st !== 'enabledForReportingButNotEnforced' &&
+        h('button', { class: 'secondary', onclick: act(() => api('PATCH', `${base}/policy`, { state: 'reportOnly' })) }, 'Set report-only'),
+      s.policy && st !== 'enabled' &&
         h('button', { class: 'danger', onclick: () => {
-          if (confirm(`Turn ON the US-only block for ${t.name}?\n\nUsers outside the US who are not excluded will be blocked. Check the Entra sign-in report (report-only results) first, and make sure your break-glass accounts are excluded.`))
-            act(() => api('PATCH', `/api/tenants/${t.tenantId}/policy`, { state: 'on' }))();
+          if (confirm(`Turn ON "${s.policy.displayName}" for ${t.name}?\n\nUsers who are not excluded and fail the policy's conditions will be blocked. Make sure your break-glass accounts are excluded.`))
+            act(() => api('PATCH', `${base}/policy`, { state: 'on' }))();
         } }, 'Turn ON'),
-      s.provisioned && s.policy.state !== 'disabled' &&
-        h('button', { class: 'secondary', onclick: act(() => api('PATCH', `/api/tenants/${t.tenantId}/policy`, { state: 'off' })) }, 'Turn OFF')),
-    h('p', { class: 'muted' }, `Exclusions group: ${s.group ? s.group.displayName : '—'} · Allowed location: ${s.location ? s.location.displayName : '—'}`),
-    s.drift.map((d) => h('p', { class: 'err' }, '⚠ ' + d + '. Run Provision again to repair.')),
-    s.drift.length ? h('button', { onclick: act(() => api('POST', `/api/tenants/${t.tenantId}/provision`, {}), 'Repaired.') }, 'Repair') : '',
+      s.policy && st !== 'disabled' &&
+        h('button', { class: 'secondary', onclick: act(() => api('PATCH', `${base}/policy`, { state: 'off' })) }, 'Turn OFF'),
+      h('button', { class: 'secondary', onclick: () => { if (confirm('Stop managing this policy and choose a different one?\n\nThe exclusions group stays on the old policy.')) act(() => api('DELETE', `${base}/policy/select`))(); } }, 'Change policy')),
+    h('p', { class: 'muted' }, `Exclusions group: ${s.group ? s.group.displayName : '—'}`),
+    s.drift.map((d) => h('p', { class: 'err' }, '⚠ ' + d)),
+    s.drift.length && s.policy
+      ? h('button', { onclick: act(() => api('POST', `${base}/policy/select`, { policyId: s.policy.id }), 'Repaired.') }, 'Repair')
+      : '',
     msg
   );
 
   main.replaceChildren(policyCard);
-  if (!s.provisioned) return;
+  if (!s.ready) return;
   main.append(addForm(t, s, act, say), exclusionTable(t, s, act, say));
   if (s.untracked.length) main.append(untrackedTable(t, s, act, say));
   main.append(auditCard(s));
+}
+
+// First visit (or after "Change policy"): discover the tenant's CA policies and let the user pick one.
+async function renderChooser(t, act, msg) {
+  const base = `/api/tenants/${t.tenantId}`;
+  const card = h('div', { class: 'card' }, h('h2', {}, t.name),
+    h('p', {}, 'Which existing Conditional Access policy enforces US-only sign-ins in this tenant?'),
+    h('p', { class: 'muted' }, 'Choosing one adds the "USA-only CA Exclusions" group to that policy\'s excluded groups (creating the group if needed). Nothing else on the policy is changed.'),
+    h('p', { class: 'muted' }, 'Discovering policies…'));
+  main.replaceChildren(card);
+
+  let policies;
+  try { policies = await api('GET', `${base}/policies`); } catch (err) { card.append(h('p', { class: 'err' }, err.message)); return; }
+  card.querySelector('p.muted:last-child').remove();
+
+  const list = (arr) => (arr.length ? arr.join(', ') : '—');
+  const rows = policies.map((p) => {
+    const st = STATE_LABEL[p.state] || [p.state, ''];
+    return h('tr', {},
+      h('td', {}, h('strong', {}, p.displayName), h('br'),
+        p.rank === 2 ? h('span', { class: 'badge ok' }, 'Likely US-only') : p.rank === 1 ? h('span', { class: 'badge warn' }, 'Blocks by location') : ''),
+      h('td', {}, h('span', { class: 'badge ' + st[1] }, st[0].split(' — ')[0])),
+      h('td', {}, p.blocks ? 'Block' : 'Other controls', h('br'), h('span', { class: 'muted' }, p.appliesTo)),
+      h('td', {}, 'Include: ' + list(p.includeLocations), h('br'), 'Exclude: ' + list(p.excludeLocations)),
+      h('td', {}, h('button', { onclick: () => {
+        if (confirm(`Use "${p.displayName}" as the US-only policy for ${t.name}?`))
+          act(() => api('POST', `${base}/policy/select`, { policyId: p.id }))();
+      } }, 'Use this policy')));
+  });
+  card.append(
+    policies.length
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['Policy', 'State', 'Action', 'Locations', ''].map((c) => h('th', {}, c)))), h('tbody', {}, rows))
+      : h('p', { class: 'muted' }, 'No Conditional Access policies found in this tenant.'),
+    h('p', {}, h('button', { class: 'secondary', onclick: () => {
+      if (confirm(`Create a NEW "USA-only Conditional Access" policy in ${t.name} (report-only)?`))
+        act(() => api('POST', `${base}/policy/create`, { mode: 'reportOnly' }))();
+    } }, 'None of these — create a new US-only policy (report-only)')),
+    msg);
 }
 
 function addForm(t, s, act, say) {
