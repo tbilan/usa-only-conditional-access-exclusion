@@ -35,7 +35,7 @@ async function loadTenants() {
   const data = await api('GET', '/api/tenants');
   tenants = data.tenants;
   $('#importGdap').hidden = !data.canImport;
-  if (!data.configured) sideMsg('Set AZURE_CLIENT_ID / AZURE_CLIENT_SECRET in .env and restart.', 'err');
+  if (!data.configured) sideMsg('Set real AZURE_CLIENT_ID / AZURE_CLIENT_SECRET values in .env (not the placeholders) and restart.', 'err');
   const ul = $('#tenantList');
   ul.replaceChildren(
     ...tenants.map((t) =>
