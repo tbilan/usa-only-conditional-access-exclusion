@@ -94,6 +94,32 @@ app.post('/api/tenants/import-gdap', wrap(async (req, res) => {
 
 // ---- Policy status / provisioning -----------------------------------------
 
+// Resolve a user ID to "Name (upn)" for log text (cached; falls back gracefully).
+const nameCache = new Map();
+async function nameOf(tenantId, userId) {
+  const key = `${tenantId}:${userId.toLowerCase()}`;
+  if (nameCache.has(key)) return nameCache.get(key);
+  let name;
+  try {
+    const u = await ca.getUser(tenantId, userId);
+    name = `${u.displayName} (${u.userPrincipalName})`;
+  } catch {
+    return '(a user that no longer exists)';
+  }
+  nameCache.set(key, name);
+  return name;
+}
+
+// Older log entries may contain raw IDs; swap them for names when the log is shown.
+const GUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+async function readableAudit(tenantId, entries) {
+  return Promise.all(entries.map(async (a) => {
+    let detail = a.detail || '';
+    for (const id of new Set(detail.match(GUID_G) || [])) detail = detail.split(id).join(await nameOf(tenantId, id));
+    return { ...a, detail };
+  }));
+}
+
 app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
   const t = req.tenant.tenantId;
   if (!req.tenant.policyId) return res.json({ tenant: req.tenant, needsPolicy: true });
@@ -105,7 +131,7 @@ app.get('/api/tenants/:tenantId/status', wrap(async (req, res) => {
     ...status,
     exclusions: tracked.map((x) => ({ ...x, inPolicy: excludedIds.has(x.userId.toLowerCase()) })),
     untracked: status.excluded.filter((m) => !store.findExclusion(t, m.id)),
-    audit: store.auditLog(t),
+    audit: await readableAudit(t, store.auditLog(t)),
   });
 }));
 
@@ -234,7 +260,7 @@ app.delete('/api/tenants/:tenantId/exclusions/:userId', wrap(async (req, res) =>
   const ex = store.findExclusion(t, req.params.userId);
   if (req.tenant.policyId) await ca.removeExcludedUser(t, req.tenant.policyId, req.params.userId);
   if (ex) store.deleteExclusion(t, req.params.userId);
-  store.audit(t, 'exclusion-removed', ex ? ex.upn : req.params.userId);
+  store.audit(t, 'exclusion-removed', ex ? ex.upn : await nameOf(t, req.params.userId));
   res.json({ ok: true });
 }));
 

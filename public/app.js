@@ -405,10 +405,23 @@ function untrackedTable(t, s, act) {
         h('button', { class: 'secondary', onclick: () => { if (confirm(`Remove ${m.userPrincipalName || m.id} from the policy\'s Exclude list?`)) act(() => api('DELETE', `/api/tenants/${t.tenantId}/exclusions/${m.id}`))(); } }, 'Remove')))))));
 }
 
+const ACTION_LABEL = {
+  'exclusion-added': 'Added exclusion',
+  'exclusion-updated': 'Changed exclusion',
+  'exclusion-removed': 'Removed exclusion',
+  'exclusion-expired': 'Exclusion expired and removed',
+  'policy-selected': 'Selected policy',
+  'policy-created': 'Created policy',
+  'policy-unlinked': 'Stopped managing policy',
+  'policy-state': 'Changed policy state',
+  provisioned: 'Set up policy',
+};
+
 function auditCard(s) {
   return h('div', { class: 'card' }, h('h2', {}, 'Recent activity'),
     s.audit.length
-      ? h('table', {}, h('tbody', {}, s.audit.map((a) => h('tr', {}, h('td', { class: 'muted' }, fmtDate(a.at)), h('td', {}, a.action), h('td', {}, a.detail)))))
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['When', 'What happened', 'Details'].map((c) => h('th', {}, c)))),
+          h('tbody', {}, s.audit.map((a) => h('tr', {}, h('td', { class: 'muted' }, fmtDate(a.at)), h('td', {}, ACTION_LABEL[a.action] || a.action), h('td', {}, a.detail)))))
       : h('p', { class: 'muted' }, 'Nothing yet.'));
 }
 
