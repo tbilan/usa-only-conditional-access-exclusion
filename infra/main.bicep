@@ -19,7 +19,8 @@ param partnerTenantId string
 @description('App Service plan size. Needs Basic or higher so Always On keeps the expiry sweep running.')
 param sku string = 'B1'
 
-var vaultName = take('kv-${replace(appName, '-', '')}-${uniqueString(resourceGroup().id)}', 24)
+// 3-24 chars, starts with a letter, no trailing hyphen: 'kv' + up to 8 chars of the app name + 13-char hash = max 23
+var vaultName = toLower('kv${take(replace(appName, '-', ''), 8)}${uniqueString(resourceGroup().id)}')
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: '${appName}-plan'

@@ -29,17 +29,24 @@ $paramFile = Join-Path $env:TEMP 'caex-params.json'
     clientId = @{ value = $ClientId }
     partnerTenantId = @{ value = $PartnerTenantId }
     sku = @{ value = $Sku }
+    location = @{ value = $Location }
     clientSecret = @{ value = $secret }
   }
 } | ConvertTo-Json -Depth 5 | Set-Content -Path $paramFile -Encoding utf8
 
 try {
-  Write-Host "Creating resource group $ResourceGroup..."
-  az group create -n $ResourceGroup -l $Location | Out-Null
+  if ((az group exists -n $ResourceGroup) -ne 'true') {
+    Write-Host "Creating resource group $ResourceGroup..."
+    az group create -n $ResourceGroup -l $Location | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the resource group.' }
+  }
 
   Write-Host 'Deploying infrastructure (plan, web app, Key Vault)...'
   $out = az deployment group create -g $ResourceGroup -f "$PSScriptRoot/main.bicep" -p "@$paramFile" `
            --query properties.outputs -o json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or -not $out) {
+    throw "Infrastructure deployment failed (see the error above). If it says 'Current Limit (B1 VMs): 0', your subscription has no App Service quota in $Location: try -Location with another region, or a different -Sku, or request quota."
+  }
 } finally {
   Remove-Item $paramFile -ErrorAction SilentlyContinue
 }
@@ -51,6 +58,7 @@ git -C "$PSScriptRoot/.." archive --format=zip -o $zip HEAD
 
 Write-Host 'Deploying code (App Service runs npm install)...'
 az webapp deploy -g $ResourceGroup -n $AppName --src-path $zip --type zip
+if ($LASTEXITCODE -ne 0) { throw 'Code deployment failed.' }
 
 Write-Host ''
 Write-Host "Site: $($out.siteUrl.value)"
