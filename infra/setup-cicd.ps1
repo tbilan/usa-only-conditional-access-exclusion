@@ -9,12 +9,13 @@
    3. Sets the GitHub repository variables/secret the workflow reads (uses the gh CLI if installed, else prints them).
 
  Example:
-   .\infra\setup-cicd.ps1 -AppName usa-only-exclusion-tool -ClientId <app id> -PartnerTenantId <bilan.com tenant id> -Location centralus
+   .\infra\setup-cicd.ps1 -Subscription <subscription id> -AppName usa-only-exclusion-tool -ClientId <app id> -PartnerTenantId <bilan.com tenant id> -Location centralus
 #>
 param(
   [Parameter(Mandatory)][string]$AppName,
   [Parameter(Mandatory)][string]$ClientId,
   [Parameter(Mandatory)][string]$PartnerTenantId,
+  [string]$Subscription = '', # subscription ID or name to deploy into; defaults to the az CLI's current one
   [string]$ResourceGroup = 'rg-usa-only-ca',
   [string]$Location = 'eastus2',
   [string]$TimeZone = 'America/New_York',
@@ -28,8 +29,12 @@ function Check([string]$what) { if ($LASTEXITCODE -ne 0) { throw "$what failed (
 $AppName = $AppName.ToLower()
 if ($AppName -notmatch '^[a-z][a-z0-9-]{0,30}[a-z0-9]$') { throw 'AppName must be lower-case letters, digits and hyphens (max 32), starting with a letter.' }
 
-$sub = az account show --query id -o tsv; Check 'az account show (are you signed in? run az login)'
-$tenant = az account show --query tenantId -o tsv
+if ($Subscription) { az account set --subscription $Subscription; Check "Selecting subscription $Subscription" }
+$acct = az account show -o json | ConvertFrom-Json; Check 'az account show (are you signed in? run az login)'
+$sub = $acct.id
+$tenant = $acct.tenantId
+Write-Host "Deploying into subscription '$($acct.name)' ($sub) in tenant $tenant"
+if (-not $Subscription) { Write-Host '  (the az CLI default; pass -Subscription <id> to choose another)' }
 
 Write-Host 'Registering resource providers (can take a few minutes the first time)...'
 foreach ($ns in 'Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.Storage', 'Microsoft.ManagedIdentity') {

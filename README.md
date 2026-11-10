@@ -63,7 +63,7 @@ Keep it at one replica: the data is a JSON file and that replica runs the expiry
 One-time setup (run on your computer, signed in with `az login` as an Owner of the subscription):
 
 ```powershell
-.\infra\setup-cicd.ps1 -AppName usa-only-exclusion-tool -ClientId <app registration client id> -PartnerTenantId <bilan.com tenant id> -Location centralus
+.\infra\setup-cicd.ps1 -Subscription <subscription id> -AppName usa-only-exclusion-tool -ClientId <app registration client id> -PartnerTenantId <bilan.com tenant id> -Location centralus
 ```
 
 It registers the needed resource providers, creates a deployment identity that GitHub signs in as (OIDC, no stored Azure
