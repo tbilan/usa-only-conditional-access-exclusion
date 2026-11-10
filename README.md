@@ -51,7 +51,36 @@ the activity log records who did what.
    Properties → **Assignment required = Yes**, then assign only the people or a group who should manage client tenants.
    Without that, every bilan.com user can open the app and change client Conditional Access policies.
 
-## Run it as a service in Azure (bilan.com subscription)
+## Run it in Azure with CI/CD (Container Apps)
+
+Every push to `main` runs the tests, builds a container image and deploys it to **Azure Container Apps**
+(`.github/workflows/deploy.yml`). This path does not use App Service VM quota.
+
+What gets created in one resource group: a container registry (Basic), a storage account with a file share that holds
+`db.json` and the session key, a Container Apps environment, and the container app (one always-on replica, HTTPS only).
+Keep it at one replica: the data is a JSON file and that replica runs the expiry sweep.
+
+One-time setup (run on your computer, signed in with `az login` as an Owner of the subscription):
+
+```powershell
+.\infra\setup-cicd.ps1 -AppName usa-only-exclusion-tool -ClientId <app registration client id> -PartnerTenantId <bilan.com tenant id> -Location centralus
+```
+
+It registers the needed resource providers, creates a deployment identity that GitHub signs in as (OIDC, no stored Azure
+password, Contributor on that resource group only), and sets the repository variables and the `APP_CLIENT_SECRET` secret
+(through the `gh` CLI if installed, otherwise it prints them for you to paste into the repository settings).
+
+Then push to `main` or run the **Test and deploy** workflow manually. The run summary shows the site URL. After the first deploy:
+
+1. On the app registration → Authentication, add **Web** redirect URIs `https://<site>/auth/callback` and `https://<site>/consent-done.html`.
+2. Set **Assignment required = Yes** on the Enterprise application (see Sign-in above).
+3. To keep existing data, upload your local `data/db.json` to the storage account's `data` file share (portal → Storage account →
+   File shares → data → Upload), then restart the container app revision.
+
+During a deploy the old and new copies overlap for a moment; avoid making changes in the app while a deploy is running.
+
+## Alternative: Azure App Service
+
 
 `infra/main.bicep` + `infra/deploy.ps1` create, in one resource group: a Linux **App Service** (Node 22, Always On, HTTPS only,
 health check `/healthz`), and a **Key Vault** that holds the client secret (the web app reads it through its managed identity).

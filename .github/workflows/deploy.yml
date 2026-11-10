@@ -1,0 +1,72 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # sign in to Azure with GitHub's OIDC token (no stored Azure password)
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  deploy:
+    needs: test
+    # Only from main, and only once infra/setup-cicd.ps1 has configured the repository.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Base resources (registry, file share, environment)
+        id: base
+        run: |
+          out=$(az deployment group create -g "$RG" -f infra/base.bicep -p location="$LOCATION" --query properties.outputs -o json)
+          echo "acr=$(echo "$out" | jq -r .acrName.value)" >> "$GITHUB_OUTPUT"
+          echo "server=$(echo "$out" | jq -r .acrLoginServer.value)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        run: |
+          az acr login -n "${{ steps.base.outputs.acr }}"
+          image="${{ steps.base.outputs.server }}/caex:${{ github.sha }}"
+          docker build -t "$image" .
+          docker push "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy container app
+        env:
+          APP_CLIENT_SECRET: ${{ secrets.APP_CLIENT_SECRET }}
+        run: |
+          url=$(az deployment group create -g "$RG" -f infra/app.bicep \
+            -p appName="${{ vars.APP_NAME }}" location="$LOCATION" image="${{ steps.image.outputs.image }}" \
+               clientId="${{ vars.APP_CLIENT_ID }}" partnerTenantId="${{ vars.PARTNER_TENANT_ID }}" \
+               timeZone="${{ vars.APP_TIMEZONE }}" clientSecret="$APP_CLIENT_SECRET" \
+            --query properties.outputs.url.value -o tsv)
+          echo "Deployed: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Redirect URIs to register: $url/auth/callback and $url/consent-done.html" >> "$GITHUB_STEP_SUMMARY"
