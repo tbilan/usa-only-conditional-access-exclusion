@@ -45,7 +45,7 @@ try {
   $out = az deployment group create -g $ResourceGroup -f "$PSScriptRoot/main.bicep" -p "@$paramFile" `
            --query properties.outputs -o json | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or -not $out) {
-    throw "Infrastructure deployment failed (see the error above). If it says 'Current Limit (B1 VMs): 0', your subscription has no App Service quota in $Location: try -Location with another region, or a different -Sku, or request quota."
+    throw "Infrastructure deployment failed (see the error above). If it says 'Current Limit (B1 VMs): 0', your subscription has no App Service quota in ${Location}: try -Location with another region, or a different -Sku, or request quota."
   }
 } finally {
   Remove-Item $paramFile -ErrorAction SilentlyContinue
