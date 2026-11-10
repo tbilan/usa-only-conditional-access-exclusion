@@ -51,9 +51,21 @@ foreach ($try in 1..6) { # a new identity can take a moment to become assignable
 }
 if (-not $assigned) { throw 'Could not grant Contributor to the deployment identity.' }
 
-az identity federated-credential create -g $ResourceGroup --identity-name id-github-deploy -n github-main `
-  --issuer https://token.actions.githubusercontent.com --subject "repo:${Repo}:ref:refs/heads/${Branch}" `
-  --audiences api://AzureADTokenExchange | Out-Null; Check 'Creating the GitHub federation'
+# GitHub identifies the repository to Azure by name ("repo:owner/name:...") or, on newer repositories, by
+# immutable IDs ("repo:owner@<id>/name@<id>:..."). Register both so sign-in works either way.
+$subjects = [ordered]@{ 'github-main' = "repo:${Repo}:ref:refs/heads/${Branch}" }
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  $info = gh api "repos/$Repo" | ConvertFrom-Json
+  if ($LASTEXITCODE -eq 0 -and $info.id) {
+    $owner, $name = $Repo.Split('/')
+    $subjects['github-main-ids'] = "repo:${owner}@$($info.owner.id)/${name}@$($info.id):ref:refs/heads/${Branch}"
+  }
+}
+foreach ($k in $subjects.Keys) {
+  az identity federated-credential create -g $ResourceGroup --identity-name id-github-deploy -n $k `
+    --issuer https://token.actions.githubusercontent.com --subject $subjects[$k] `
+    --audiences api://AzureADTokenExchange | Out-Null; Check "Creating the GitHub federation ($k)"
+}
 
 $vars = [ordered]@{
   AZURE_CLIENT_ID       = $id.clientId
