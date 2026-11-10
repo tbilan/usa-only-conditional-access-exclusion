@@ -21,8 +21,15 @@ param partnerTenantId string
 @description('IANA time zone used for "remove after" dates')
 param timeZone string = 'America/New_York'
 
+@description('Optional custom host name, e.g. exclusionlist.bilan.com. Only used once its certificate exists.')
+param customDomain string = ''
+
+@description('Resource ID of the managed certificate for customDomain (empty until the domain has been bound).')
+param certificateId string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var name = toLower(appName)
+var useCustomDomain = !empty(customDomain) && !empty(certificateId)
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: 'acr${suffix}'
@@ -44,6 +51,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'auto'
         allowInsecure: false
+        customDomains: useCustomDomain ? [
+          {
+            name: customDomain
+            bindingType: 'SniEnabled'
+            certificateId: certificateId
+          }
+        ] : []
       }
       registries: [
         {
@@ -70,7 +84,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: clientId }
             { name: 'AZURE_CLIENT_SECRET', secretRef: 'client-secret' }
             { name: 'PARTNER_TENANT_ID', value: partnerTenantId }
-            { name: 'BASE_URL', value: 'https://${name}.${env.properties.defaultDomain}' }
+            { name: 'BASE_URL', value: useCustomDomain ? 'https://${customDomain}' : 'https://${name}.${env.properties.defaultDomain}' }
+            { name: 'ALLOWED_HOSTS', value: '${name}.${env.properties.defaultDomain}' }
             { name: 'HOST', value: '0.0.0.0' }
             { name: 'PORT', value: '8080' }
             { name: 'TRUST_PROXY', value: 'true' }
@@ -98,4 +113,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-output url string = 'https://${app.properties.configuration.ingress.fqdn}'
+output url string = useCustomDomain ? 'https://${customDomain}' : 'https://${app.properties.configuration.ingress.fqdn}'
+output defaultHost string = app.properties.configuration.ingress.fqdn
+output domainVerificationId string = app.properties.customDomainVerificationId

@@ -18,6 +18,7 @@ param(
   [string]$ResourceGroup = 'rg-usa-only-ca',
   [string]$Location = 'eastus2',
   [string]$TimeZone = 'America/New_York',
+  [string]$CustomDomain = '', # optional, e.g. exclusionlist.bilan.com
   [string]$Repo = 'tbilan/usa-only-conditional-access-exclusion',
   [string]$Branch = 'main'
 )
@@ -78,6 +79,7 @@ $vars = [ordered]@{
   PARTNER_TENANT_ID     = $PartnerTenantId
   APP_TIMEZONE          = $TimeZone
 }
+if ($CustomDomain) { $vars['CUSTOM_DOMAIN'] = $CustomDomain.ToLower() }
 
 if (Get-Command gh -ErrorAction SilentlyContinue) {
   Write-Host "Setting GitHub repository variables on $Repo..."

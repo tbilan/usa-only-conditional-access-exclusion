@@ -62,11 +62,55 @@ jobs:
       - name: Deploy container app
         env:
           APP_CLIENT_SECRET: ${{ secrets.APP_CLIENT_SECRET }}
+          APP: ${{ vars.APP_NAME }}
+          DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          IMAGE: ${{ steps.image.outputs.image }}
         run: |
-          url=$(az deployment group create -g "$RG" -f infra/app.bicep \
-            -p appName="${{ vars.APP_NAME }}" location="$LOCATION" image="${{ steps.image.outputs.image }}" \
-               clientId="${{ vars.APP_CLIENT_ID }}" partnerTenantId="${{ vars.PARTNER_TENANT_ID }}" \
-               timeZone="${{ vars.APP_TIMEZONE }}" clientSecret="$APP_CLIENT_SECRET" \
-            --query properties.outputs.url.value -o tsv)
+          az config set extension.use_dynamic_install=yes_without_prompt 2>/dev/null
+          ENVNAME=cae-usa-only-ca
+          APP=$(echo "$APP" | tr '[:upper:]' '[:lower:]')
+
+          # ID of the managed certificate for the custom domain, if it has been issued already.
+          cert_id() {
+            az containerapp env certificate list -g "$RG" -n "$ENVNAME" \
+              --query "[?properties.subjectName=='$DOMAIN' && contains(id, 'managedCertificates')].id | [0]" -o tsv 2>/dev/null || true
+          }
+          deploy() { # $1 = custom domain (or empty), $2 = certificate id (or empty)
+            az deployment group create -g "$RG" -f infra/app.bicep \
+              -p appName="$APP" location="$LOCATION" image="$IMAGE" \
+                 clientId="${{ vars.APP_CLIENT_ID }}" partnerTenantId="${{ vars.PARTNER_TENANT_ID }}" \
+                 timeZone="${{ vars.APP_TIMEZONE }}" clientSecret="$APP_CLIENT_SECRET" \
+                 customDomain="$1" certificateId="$2" \
+              --query properties.outputs -o json
+          }
+
+          CERT=""
+          if [ -n "$DOMAIN" ]; then CERT=$(cert_id); fi
+          out=$(deploy "${CERT:+$DOMAIN}" "$CERT")
+
+          # First time with a custom domain: add it, issue a free managed certificate, then redeploy using it.
+          if [ -n "$DOMAIN" ] && [ -z "$CERT" ]; then
+            az containerapp hostname add -g "$RG" -n "$APP" --hostname "$DOMAIN" >/dev/null 2>&1 || true
+            if az containerapp hostname bind -g "$RG" -n "$APP" --hostname "$DOMAIN" --environment "$ENVNAME" --validation-method CNAME >/dev/null; then
+              CERT=$(cert_id)
+              out=$(deploy "$DOMAIN" "$CERT")
+            else
+              host=$(echo "$out" | jq -r .defaultHost.value)
+              vid=$(echo "$out" | jq -r .domainVerificationId.value)
+              sub="${DOMAIN%%.*}"
+              echo "::warning::Custom domain $DOMAIN is not bound yet. Add the DNS records shown in the run summary, then re-run this workflow."
+              {
+                echo "### Custom domain not bound yet"
+                echo "Add these DNS records for \`$DOMAIN\`, wait a few minutes, then re-run this workflow:"
+                echo ""
+                echo "| Type | Name | Value |"
+                echo "|---|---|---|"
+                echo "| CNAME | \`$sub\` | \`$host\` |"
+                echo "| TXT | \`asuid.$sub\` | \`$vid\` |"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          url=$(echo "$out" | jq -r .url.value)
           echo "Deployed: $url" >> "$GITHUB_STEP_SUMMARY"
           echo "Redirect URIs to register: $url/auth/callback and $url/consent-done.html" >> "$GITHUB_STEP_SUMMARY"

@@ -77,6 +77,11 @@ Then push to `main` or run the **Test and deploy** workflow manually. The run su
 3. To keep existing data, upload your local `data/db.json` to the storage account's `data` file share (portal → Storage account →
    File shares → data → Upload), then restart the container app revision.
 
+**Custom domain:** set the repository variable `CUSTOM_DOMAIN` (e.g. `exclusionlist.bilan.com`) and run the workflow. The first run
+prints the two DNS records to create (a CNAME to the app's default host name and a TXT `asuid.<name>` verification record). Once
+they exist, re-run the workflow: it issues a free managed certificate, binds the domain, and switches the app's address to it.
+Then register `https://<domain>/auth/callback` and `https://<domain>/consent-done.html` as redirect URIs.
+
 During a deploy the old and new copies overlap for a moment; avoid making changes in the app while a deploy is running.
 
 ## Alternative: Azure App Service

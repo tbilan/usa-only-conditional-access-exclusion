@@ -20,7 +20,8 @@ if (cfg.authDisabled && !['127.0.0.1', 'localhost'].includes(cfg.host)) {
 // This app can change security policy, so it checks the Host header (DNS rebinding), accepts only
 // JSON for changes (cross-site forms), and requires a bilan.com sign-in (lib/auth.js).
 app.get('/healthz', (req, res) => res.send('ok')); // App Service health probe: no data, exempt from the host check
-const allowedHosts = new Set([...(process.env.WEBSITE_HOSTNAME ? [process.env.WEBSITE_HOSTNAME.toLowerCase()] : []), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
+const extraHosts = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+const allowedHosts = new Set([...extraHosts, ...(process.env.WEBSITE_HOSTNAME ? [process.env.WEBSITE_HOSTNAME.toLowerCase()] : []), `localhost:${cfg.port}`, `127.0.0.1:${cfg.port}`, new URL(cfg.baseUrl).host.toLowerCase()]);
 app.use((req, res, next) => {
   const host = (req.headers.host || '').toLowerCase();
   if (!allowedHosts.has(host)) {
