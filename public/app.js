@@ -144,7 +144,7 @@ function render(s) {
   const act = (fn, okText) => async () => {
     say('Working…');
     try { await fn(); await openTenant(t.tenantId); } catch (err) { say(err.message, 'err'); return; }
-    if (okText) say(okText, 'good');
+    if (okText) sideMsg(okText, 'good'); // the page was just redrawn, so show success in the sidebar
   };
   const base = `/api/tenants/${t.tenantId}`;
 
@@ -268,9 +268,12 @@ function addForm(t, s, act, say) {
   date.addEventListener('input', () => { if (date.value) days.value = String(Math.max(0, daysUntil(date.value))); sync(); });
 
   btn.addEventListener('click', act(async () => {
-    await api('POST', `/api/tenants/${t.tenantId}/exclusions`, {
-      userId: pick.value, permanent: perm.checked, expiresOn: perm.checked ? null : date.value, reason: reason.value,
-    });
+    btn.disabled = true; // no double submit
+    try {
+      await api('POST', `/api/tenants/${t.tenantId}/exclusions`, {
+        userId: pick.value, permanent: perm.checked, expiresOn: perm.checked ? null : date.value, reason: reason.value,
+      });
+    } catch (err) { btn.disabled = false; throw err; }
   }, 'Exclusion added.'));
   void say;
 
@@ -432,7 +435,7 @@ function auditCard(s) {
       : h('p', { class: 'muted' }, 'Nothing yet.'));
 }
 
-loadTenants();
+loadTenants().catch((err) => sideMsg(err.message, 'err'));
 
 // Who is signed in (SSO) + sign out.
 api('GET', '/api/me').then((me) => {

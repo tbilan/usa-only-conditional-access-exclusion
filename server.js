@@ -118,7 +118,8 @@ async function nameOf(tenantId, userId) {
   try {
     const u = await ca.getUser(tenantId, userId);
     name = `${u.displayName} (${u.userPrincipalName})`;
-  } catch {
+  } catch (e) {
+    if (e.status !== 404) return '(name unavailable right now)'; // transient: don't cache
     name = '(a user that no longer exists)';
   }
   nameCache.set(key, name);
@@ -244,6 +245,10 @@ app.post('/api/tenants/:tenantId/exclusions', wrap(async (req, res) => {
   const terms = parseTerms(req.body);
 
   if (!req.tenant.policyId) throw bad('Choose a policy for this tenant first', 409);
+  const existing = store.findExclusion(t, userId);
+  if (existing && existing.policyId && existing.policyId.toLowerCase() !== req.tenant.policyId.toLowerCase()) {
+    throw bad('This user is still tracked on a previously selected policy. Remove that exclusion first.', 409);
+  }
   const user = await ca.getUser(t, userId);
   await ca.addExcludedUser(t, req.tenant.policyId, userId);
 
@@ -308,6 +313,13 @@ app.post('/api/sweep', wrap(async (req, res) => {
   const r = await runSweep();
   res.json({ removed: r.removed.length, failed: r.failed.length });
 }));
+
+// Last resort: bad JSON bodies and unexpected errors get a JSON answer, never a stack trace.
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
+  if (status >= 500) console.error(err);
+  res.status(status).json({ error: status >= 500 ? 'Unexpected server error' : err.message });
+});
 
 app.listen(cfg.port, cfg.host, () => {
   console.log(`USA-only Conditional Access Exclusion → ${cfg.baseUrl} (listening on ${cfg.host}:${cfg.port})`);
