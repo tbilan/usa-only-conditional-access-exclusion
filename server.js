@@ -321,7 +321,8 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   res.status(status).json({ error: status >= 500 ? 'Unexpected server error' : err.message });
 });
 
-app.listen(cfg.port, cfg.host, () => {
+function start() {
+  return app.listen(cfg.port, cfg.host, () => {
   console.log(`USA-only Conditional Access Exclusion → ${cfg.baseUrl} (listening on ${cfg.host}:${cfg.port})`);
   if (cfg.authDisabled) console.warn('AUTH_DISABLED=true: sign-in is OFF (local development only).');
   else if (!auth.configured()) console.warn('Sign-in is not configured: set PARTNER_TENANT_ID (your bilan.com tenant ID) plus the client ID/secret in .env.');
@@ -331,6 +332,11 @@ app.listen(cfg.port, cfg.host, () => {
   if (!cfg.clientId || !cfg.clientSecret) console.warn('AZURE_CLIENT_ID / AZURE_CLIENT_SECRET missing — copy .env.example to .env');
   runSweep().catch((e) => console.error('[sweep]', e.message));
   setInterval(() => runSweep().catch((e) => console.error('[sweep]', e.message)), cfg.sweepIntervalMinutes * 60_000);
-});
+  });
+}
 
-module.exports = { isExpired };
+// Tests set CAEX_NO_LISTEN to import the app without starting the server or the sweep timer.
+// (Not require.main: process managers such as PM2 load this file as a module.)
+if (!process.env.CAEX_NO_LISTEN) start();
+
+module.exports = { app, store, runSweep, start };
