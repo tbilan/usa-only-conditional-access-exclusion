@@ -107,6 +107,19 @@ JSON file and the instance runs the expiry sweep. Plan size B1 (about $13/month)
 
 Consent links for customer tenants now use the site address, so send admins links from the hosted app.
 
+## Approving the app in a customer tenant you manage through GDAP
+
+The **Grant admin consent** link only works when you sign in with an account that belongs to the customer tenant.
+As a partner (GDAP) admin it fails with `AADSTS90099`. Use the script instead; it creates the enterprise application in
+the customer tenant and grants the Graph application permissions through Microsoft Graph:
+
+```powershell
+.\infra\grant-tenant-consent.ps1 -TenantId <customer tenant id> -ClientId <app registration client id>
+```
+
+Your GDAP relationship needs roles that allow it (Cloud Application Administrator plus Privileged Role Administrator, or
+Global Administrator).
+
 ## Notes
 
 - Listens on `127.0.0.1` unless you set `HOST`. Rejects foreign `Host` headers and non-JSON writes; every page and API call except the sign-in routes needs a valid session.
