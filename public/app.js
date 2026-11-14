@@ -115,6 +115,21 @@ function removeTenantCard(t) {
       } }, 'Remove tenant from app'), msg));
 }
 
+// Shown when a tenant can't be read: most often it has not approved (consented to) the app yet.
+function consentHelp(t) {
+  return h('div', { class: 'card' },
+    h('h3', {}, 'Has this tenant approved the app?'),
+    h('p', {}, 'A Global Administrator of ', h('strong', {}, t.name), ' must approve the app once before it can be managed here:'),
+    h('ol', {},
+      h('li', {}, 'Open this link signed in as an admin of that tenant (or send it to one): ',
+        h('a', { href: t.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')),
+      h('li', {}, 'Review the permissions and choose Accept.'),
+      h('li', {}, 'Come back here and press Check again.')),
+    h('div', { class: 'row' },
+      h('button', { onclick: () => openTenant(t.tenantId) }, 'Check again'),
+      h('button', { class: 'secondary', onclick: () => navigator.clipboard.writeText(t.consentUrl).then(() => sideMsg('Consent link copied.', 'good'), () => sideMsg('Could not copy the link.', 'err')) }, 'Copy link')));
+}
+
 async function openTenant(tenantId) {
   const seq = ++openSeq;
   current = tenantId;
@@ -130,8 +145,7 @@ async function openTenant(tenantId) {
     main.replaceChildren(
       h('h2', {}, t ? t.name : tenantId),
       h('p', { class: 'err' }, err.message),
-      t ? h('p', {}, 'If this tenant has not approved the app yet, send an admin this link: ',
-        h('a', { href: t.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')) : '',
+      t ? consentHelp(t) : '',
       t ? removeTenantCard(t) : ''
     );
   }
@@ -198,8 +212,7 @@ async function renderChooser(t, act, msg) {
     card.querySelector('p.muted:last-child').remove();
     const full = tenants.find((x) => x.tenantId === t.tenantId);
     card.append(h('p', { class: 'err' }, err.message),
-      full ? h('p', {}, 'If this tenant has not approved the app yet, send an admin this link: ',
-        h('a', { href: full.consentUrl, target: '_blank', rel: 'noopener' }, 'Grant admin consent')) : '');
+      full ? consentHelp(full) : '');
     main.append(removeTenantCard(t));
     return;
   }

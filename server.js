@@ -40,10 +40,17 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Audit entries record who did it.
 const audit = (req, tenantId, action, detail) => store.audit(tenantId, action, detail, req.user && req.user.upn);
 
+// A 401 from this app means "your session ended" and makes the page go to sign-in. Microsoft also
+// answers 401 when a customer tenant has not approved the app, so never pass an upstream 401 through:
+// report it as 502 so the page shows the message (and the consent link) instead of reloading.
+const statusOf = (e) => {
+  const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+  return status === 401 ? 502 : status;
+};
+
 const wrap = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((e) => {
-    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
-    res.status(status).json({ error: e.message, code: e.code });
+    res.status(statusOf(e)).json({ error: e.message, code: e.code });
   });
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -317,7 +324,7 @@ app.post('/api/sweep', wrap(async (req, res) => {
 
 // Last resort: bad JSON bodies and unexpected errors get a JSON answer, never a stack trace.
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
-  const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
+  const status = statusOf(err);
   if (status >= 500) console.error(err);
   res.status(status).json({ error: status >= 500 ? 'Unexpected server error' : err.message });
 });

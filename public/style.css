@@ -43,3 +43,4 @@ td.row button { margin-right:6px; }
 td.signins { min-width:260px; }
 
 .who { display:flex; align-items:center; gap:10px; color:var(--muted); }
+ol { margin:0 0 12px; padding-left:20px; } ol li { margin:4px 0; }

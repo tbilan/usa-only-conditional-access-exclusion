@@ -18,6 +18,7 @@ Object.assign(process.env, {
 });
 
 const T = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const NOCONSENT = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'; // tenant that has not approved the app
 const P1 = 'b1111111-1111-1111-1111-111111111111';
 const P2 = 'b2222222-2222-2222-2222-222222222222';
 const U1 = 'c1111111-1111-1111-1111-111111111111'; // already excluded in the policy (outside the app)
@@ -55,6 +56,7 @@ const gerr = (status, message) => json(status, { error: { code: 'x', message } }
 const realFetch = global.fetch;
 global.fetch = async (url, opts = {}) => {
   url = String(url);
+  if (url.startsWith('https://login.microsoftonline.com/' + NOCONSENT)) return json(401, { error: 'invalid_client', error_description: 'AADSTS7000229: The client application is missing service principal in the tenant.' });
   if (url.startsWith('https://login.microsoftonline.com/')) return json(200, { access_token: 'h.' + Buffer.from('{"roles":[]}').toString('base64url') + '.s', expires_in: 3600 });
   if (!url.startsWith('https://graph.microsoft.com/v1.0')) return realFetch(url, opts);
   const u = new URL(url);
@@ -256,4 +258,14 @@ test('when Graph is down, an expired exclusion is kept and retried later', async
   assert.ok(store.findExclusion(T, U2), `record kept after failure: ${JSON.stringify(r1)}`);
   const r2 = await runSweep();
   assert.equal(r2.removed.length, 1);
+});
+
+test('a tenant that has not approved the app gets a readable error, never a 401 (which would bounce the page to sign-in)', async () => {
+  assert.equal((await call('POST', '/api/tenants', { name: 'New Co', tenantId: NOCONSENT })).status, 201);
+  const r = await call('GET', `/api/tenants/${NOCONSENT}/policies`);
+  assert.notEqual(r.status, 401);
+  assert.equal(r.status, 502);
+  assert.match(r.body.error, /has an admin granted consent/);
+  const list = (await call('GET', '/api/tenants')).body.tenants.find((x) => x.tenantId === NOCONSENT);
+  assert.match(list.consentUrl, new RegExp(`login.microsoftonline.com/${NOCONSENT}/adminconsent`));
 });
